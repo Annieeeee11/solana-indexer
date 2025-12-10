@@ -1,0 +1,35 @@
+# Rust
+target/
+Cargo.lock
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Config (if sensitive)
+config.toml
+config.yaml
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+indexer.db
+indexer.db-journal
+libconfig.rlib
