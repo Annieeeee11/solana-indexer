@@ -1,0 +1,11 @@
+pub const DATABASE: &str = "💾";
+pub const CONNECTION: &str = "🔗";
+pub const WALLET: &str = "👛";
+pub const TRANSACTION: &str = "💸";
+pub const SUCCESS: &str = "✅";
+pub const ERROR: &str = "❌";
+pub const WARNING: &str = "⚠️";
+pub const INFO: &str = "ℹ️";
+pub const COMPLETE: &str = "✓";
+pub const SLOT: &str = "🎰";
+pub const MONEY: &str = "💰";
