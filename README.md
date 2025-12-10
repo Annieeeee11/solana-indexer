@@ -80,11 +80,10 @@ cargo run -- watch <ACCOUNT_ADDRESS>
 
 ## 📦 Tech Stack
 
-- **Language**: Rust 2021
+- **Language**: Rust
 - **Async Runtime**: Tokio
 - **gRPC**: Tonic + Yellowstone gRPC client
 - **Database**: SQLx (SQLite/PostgreSQL)
-- **Caching**: Moka (L2), BTreeMap (L1)
 - **CLI**: Clap
 - **Logging**: Tracing
 
@@ -97,10 +96,10 @@ cargo run -- watch <ACCOUNT_ADDRESS>
 - `core/account_watcher/` - Account change monitoring
 
 **Data Sources:**
-- `yellowstone_grpc.rs` - Real time gRPC streaming(optional) (still in-progress)
+- `yellowstone_grpc.rs` - Real time gRPC streaming(optional) (still in progress)
 - `solana_rpc.rs` - HTTP RPC polling (fallback)
 
-**Storage:**
+**Storage:** (in progress)
 - `database.rs` - Storage trait interface
 - `factory.rs` - Creates SQLite or PostgreSQL storage
 - `sqlite.rs` / `postgres.rs` - Database implementations
