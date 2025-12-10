@@ -5,14 +5,14 @@ A high-performance, production-ready Solana blockchain indexer built with Rust.
 [![Solana](https://img.shields.io/badge/Solana-000?style=for-the-badge&logo=Solana&logoColor=9945FF)](https://solana.com/)
 ![Rust](https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust)
 
-## Demo
+## 🖥️ Demo
 
 ### Interface
 ![Solana Indexer](public/image_copy.png)
 
 ![Solana Indexer](public/image.png)
 
-## Architecture
+## 🏗️  Architecture
 ![Architecture](public/a1.png)
 ![Architecture](public/a2.png)
 ![Architecture](public/a3.png)
@@ -27,7 +27,7 @@ A high-performance, production-ready Solana blockchain indexer built with Rust.
 - **Beautiful CLI**: Terminal UI
 - **Production Ready**: Error handling, logging, and graceful fallbacks
 
-## Installation
+## 📦 Installation
 
 ### Prerequisites
 
@@ -51,7 +51,7 @@ cp .env.example .env
 cargo run -- --help
 ```
 
-### Start Indexer
+### 🎯 Start Indexer
 
 ```bash
 # Start with real-time streaming (if Yellowstone configured)
@@ -78,7 +78,7 @@ cargo run -- track wallets remove -a <ADDRESS>
 cargo run -- watch <ACCOUNT_ADDRESS>
 ```
 
-## Tech Stack
+## 📦 Tech Stack
 
 - **Language**: Rust 2021
 - **Async Runtime**: Tokio
@@ -88,7 +88,7 @@ cargo run -- watch <ACCOUNT_ADDRESS>
 - **CLI**: Clap
 - **Logging**: Tracing
 
-### Module Breakdown
+### 📦 Module Breakdown
 
 **Core Modules:**
 - `context.rs` - Initializes and manages application state
@@ -113,11 +113,12 @@ cargo run -- watch <ACCOUNT_ADDRESS>
 - `cli_animations.rs` - Terminal UI
 - `icons.rs` / `theme.rs` - UI styling
 
-## Contributing
+## 🤝 Contributing
 
 Contributions welcome! Please open an issue or PR. As I’m just getting started this project will have alot of mistakes, I’d really appreciate your support in making this project even better.
 
 ---
 
 **Built with Confusion, Powered by Errors**
+
 **If you hate this project, bash me here [:))](https://x.com/bas_karo_anaya)**
