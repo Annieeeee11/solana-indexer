@@ -4,10 +4,12 @@ A high-performance, production-ready Solana blockchain indexer built with Rust.
  
 [![Solana](https://img.shields.io/badge/Solana-000?style=for-the-badge&logo=Solana&logoColor=9945FF)](https://solana.com/)
 ![Rust](https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust)
+[![SQLite](https://img.shields.io/badge/SQLite-%2307405e.svg?logo=sqlite&logoColor=white)](#)
+[![Postgres](https://img.shields.io/badge/Postgres-%23316192.svg?logo=postgresql&logoColor=white)](#)
 
 ## 🖥️ Demo
 
-### Interface
+### 🖥️ Interface
 ![Solana Indexer](public/image_copy.png)
 
 ![Solana Indexer](public/image.png)
