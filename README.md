@@ -1,4 +1,4 @@
-# Solana Indexer
+# Solana Indexer (IN-PROGRESS)
 
 A high-performance, production-ready Solana blockchain indexer built with Rust.
  
