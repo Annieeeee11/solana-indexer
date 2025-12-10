@@ -1,0 +1,39 @@
+[package]
+name = "solana-indexer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { version = "1.0.99", features = ["std"] }
+clap = { version = "4.5.46", features = ["derive", "color", "env"] }
+solana-sdk = "3.0.0"
+solana-rpc-client = "3.0.0"
+solana-transaction-status = "3.0.0"
+solana-rpc-client-api = "3.0.0"
+
+tonic = "0.14.1"
+tokio = { version = "1.47.1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+
+yellowstone-grpc-client = "9.0.0"
+yellowstone-grpc-proto = "9.0.0"
+bs58 = "0.5.1"
+
+colored = "2.1.0"
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+serde = { version = "1.0.213", features = ["derive"] }
+serde_json = "1.0.133"
+
+futures = "0.3.31"
+dotenvy = "0.15.7"
+reqwest = { version = "0.12.8", features = ["json"] }
+
+sqlx = { version = "0.8.5", features = ["runtime-tokio-rustls", "sqlite", "postgres", "chrono", "migrate"] }
+moka = { version = "0.12.10", features = ["future"] }
+async-trait = "0.1"
+chrono = { version = "0.4.31", features = ["serde"] }
+thiserror = "1.0"
+
+[[bin]]
+name = "indexer"
+path = "src/bin/cli.rs"
