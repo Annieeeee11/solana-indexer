@@ -23,7 +23,7 @@ A high-performance, production-ready Solana blockchain indexer built with Rust.
 
 - **Real-Time Indexing**: Stream slots and transactions via Yellowstone gRPC or RPC polling
 - **Multi-Tier Caching**: L1 (hot slots), L2 (transactions), L3 (accounts) for optimal performance
-- **Dual Database Support**: SQLite (default) or PostgreSQL
+- **Dual Database Support**: SQLite (default) or PostgreSQL (in-progress)
 - **Account Monitoring**: Watch specific accounts for balance/data changes
 - **Wallet Management**: Add, remove, and track wallets
 - **Beautiful CLI**: Terminal UI
@@ -89,6 +89,7 @@ cargo run -- watch <ACCOUNT_ADDRESS>
 - **CLI**: Clap
 - **Logging**: Tracing
 
+<!-- 
 ### 📦 Module Breakdown
 
 **Core Modules:**
@@ -113,6 +114,7 @@ cargo run -- watch <ACCOUNT_ADDRESS>
 - `logger.rs` - Logging setup
 - `cli_animations.rs` - Terminal UI
 - `icons.rs` / `theme.rs` - UI styling
+-->
 
 ## 🤝 Contributing
 
