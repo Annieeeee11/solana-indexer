@@ -1,5 +1,6 @@
 use crate::core::channels;
 use crate::core::types::{AccountState, Slot, SlotStatus, TransactionInfo};
+use crate::data_sources::AccountSource;
 use crate::utils::errors::{IndexerError, Result};
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use solana_rpc_client_api::config::RpcBlockConfig;
@@ -59,14 +60,20 @@ impl SolanaRpc {
         Ok(rx)
     }
 
-    pub async fn get_account(&self, address: &str) -> Result<AccountState> {
+    async fn fetch_account_state(&self, address: &str) -> Result<AccountState> {
         let pubkey: Pubkey = address.parse()
             .map_err(|e| IndexerError::RpcError(format!("Invalid address: {}", e)))?;
 
         let account = self.client.get_account(&pubkey).await
             .map_err(|e| IndexerError::RpcError(format!("RPC error: {}", e)))?;
 
-        let slot = self.client.get_slot().await.unwrap_or(0);
+        let slot = match self.client.get_slot().await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("Could not fetch current slot for account {}: {}", address, e);
+                0
+            }
+        };
 
         Ok(AccountState {
             address: address.to_string(),
@@ -77,6 +84,10 @@ impl SolanaRpc {
             data: account.data,
             rent_epoch: account.rent_epoch,
         })
+    }
+
+    pub async fn get_account(&self, address: &str) -> Result<AccountState> {
+        self.fetch_account_state(address).await
     }
 
     pub async fn get_block_with_transactions(&self, slot: u64) -> Result<Vec<TransactionInfo>> {
@@ -167,5 +178,12 @@ impl SolanaRpc {
             .first()
             .map(|l| l.to_string())
             .ok_or_else(|| IndexerError::RpcError("No leader".into()))
+    }
+}
+
+#[async_trait::async_trait]
+impl AccountSource for SolanaRpc {
+    async fn get_account(&self, address: &str) -> Result<AccountState> {
+        self.fetch_account_state(address).await
     }
 }

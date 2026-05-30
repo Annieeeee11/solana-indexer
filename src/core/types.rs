@@ -92,3 +92,25 @@ pub struct AccountState {
     pub data: Vec<u8>,
     pub rent_epoch: u64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn slot_status_from_str() {
+        assert!(matches!(
+            SlotStatus::from_str("Finalized").unwrap(),
+            SlotStatus::Finalized
+        ));
+        assert!(matches!(
+            SlotStatus::from_str("Confirmed").unwrap(),
+            SlotStatus::Confirmed
+        ));
+        assert!(matches!(
+            SlotStatus::from_str("unknown").unwrap(),
+            SlotStatus::Processed
+        ));
+    }
+}

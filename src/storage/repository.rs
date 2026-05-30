@@ -65,7 +65,7 @@ macro_rules! row_mappers {
                     slot: row.get::<i64, _>(0) as u64,
                     timestamp: row.get(1),
                     parent: row.get::<Option<i64>, _>(2).map(|p| p as u64),
-                    status: SlotStatus::from_str(row.get(3)),
+                    status: row.get::<&str, _>(3).parse().unwrap_or(SlotStatus::Processed),
                     block_hash: row.get(4),
                     block_height: row.get::<Option<i64>, _>(5).map(|h| h as u64),
                 }

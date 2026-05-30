@@ -109,17 +109,4 @@ impl AccountWatcher {
             }
         }
     }
-
-    pub async fn start(&self) -> Result<()> {
-        self.run(|address, prev, curr| {
-            tracing::info!(
-                "Account {} changed: {} → {} lamports at slot {}",
-                address,
-                prev.lamports,
-                curr.lamports,
-                curr.slot
-            );
-        })
-        .await
-    }
 }

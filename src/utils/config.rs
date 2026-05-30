@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crate::utils::errors::Result;
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub rpc: RpcConfig,
@@ -30,7 +32,7 @@ pub struct CacheConfig {
 }
 
 impl Config {
-    pub fn load() -> anyhow::Result<Self> {
+    pub fn load() -> Result<Self> {
         dotenvy::dotenv().ok();
 
         Ok(Self {
@@ -73,7 +75,6 @@ impl Config {
         })
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

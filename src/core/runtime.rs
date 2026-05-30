@@ -140,3 +140,120 @@ pub async fn run(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::types::Slot;
+    use crate::storage::cache::multi_cache::MultiCache;
+    use crate::storage::database::DatabaseStorage;
+    use crate::utils::config::{CacheConfig, Config, RpcConfig, StorageConfig};
+    use async_trait::async_trait;
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
+
+    struct MockDb {
+        wallets: Mutex<Vec<String>>,
+    }
+
+    impl MockDb {
+        fn new(wallets: Vec<String>) -> Self {
+            Self {
+                wallets: Mutex::new(wallets),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl DatabaseStorage for MockDb {
+        async fn store_slot(&self, _slot: &Slot) -> Result<()> {
+            Ok(())
+        }
+
+        async fn store_account(&self, _account: AccountState) -> Result<()> {
+            Ok(())
+        }
+
+        async fn get_account(&self, _address: &str) -> Result<Option<AccountState>> {
+            Ok(None)
+        }
+
+        async fn get_slot(&self, _slot: u64) -> Result<Option<Slot>> {
+            Ok(None)
+        }
+
+        async fn store_transaction(
+            &self,
+            _tx: crate::core::types::Transaction,
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        async fn get_transaction(
+            &self,
+            _signature: &str,
+        ) -> Result<Option<crate::core::types::Transaction>> {
+            Ok(None)
+        }
+
+        async fn get_latest_slot(&self) -> Result<Option<Slot>> {
+            Ok(None)
+        }
+
+        async fn add_wallet(&self, _address: String, _name: Option<String>) -> Result<()> {
+            Ok(())
+        }
+
+        async fn remove_wallet(&self, _address: &str) -> Result<()> {
+            Ok(())
+        }
+
+        async fn list_wallets(
+            &self,
+            _active_only: bool,
+        ) -> Result<Vec<(String, Option<String>, i64)>> {
+            Ok(vec![])
+        }
+
+        async fn get_active_wallets(&self) -> Result<Vec<String>> {
+            Ok(self.wallets.lock().unwrap().clone())
+        }
+    }
+
+    fn test_context(wallets: Vec<String>, watch_accounts: Vec<String>) -> AppContext {
+        let db = Arc::new(MockDb::new(wallets));
+        AppContext {
+            config: Config {
+                rpc: RpcConfig {
+                    solana_rpc_url: "http://localhost".into(),
+                    yellowstone_grpc_url: None,
+                    yellowstone_grpc_token: None,
+                },
+                storage: StorageConfig {
+                    sqlite_path: PathBuf::from("test.db"),
+                    postgres_url: None,
+                },
+                cache: CacheConfig {
+                    l1_size: 10,
+                    l2_size: 10,
+                    l3_size: 10,
+                },
+                watch_accounts,
+            },
+            cache: Arc::new(MultiCache::new(10, 10, 10, db)),
+            rpc: Arc::new(crate::data_sources::solana_rpc::SolanaRpc::new("http://localhost")),
+        }
+    }
+
+    #[tokio::test]
+    async fn collect_watch_accounts_dedupes_env_and_db() {
+        let ctx = test_context(
+            vec!["wallet1".into()],
+            vec!["wallet2".into(), "wallet1".into()],
+        );
+        let addrs = collect_watch_accounts(&ctx).await.unwrap();
+        assert_eq!(addrs.len(), 2);
+        assert!(addrs.contains(&"wallet1".to_string()));
+        assert!(addrs.contains(&"wallet2".to_string()));
+    }
+}

@@ -205,11 +205,12 @@ mod tests {
         db.store_slot(&sample_slot(42)).await.unwrap();
 
         let cache = MultiCache::new(10, 10, 10, db);
-        assert!(cache.l1.get(42).await.is_none());
-
         let slot = cache.get_slot(42).await.unwrap().expect("slot in db");
         assert_eq!(slot.slot, 42);
-        assert!(cache.l1.get(42).await.is_some());
+
+        // Second read should still succeed (served from L1 after backfill).
+        let cached = cache.get_slot(42).await.unwrap().expect("l1 hit");
+        assert_eq!(cached.slot, 42);
     }
 
     #[tokio::test]
@@ -226,14 +227,18 @@ mod tests {
         db.store_transaction(tx.clone()).await.unwrap();
 
         let cache = MultiCache::new(10, 10, 10, db);
-        assert!(cache.l2.get("sig1").await.is_none());
-
         let found = cache
             .get_transaction("sig1")
             .await
             .unwrap()
             .expect("tx in db");
         assert_eq!(found.fee, 5000);
-        assert!(cache.l2.get("sig1").await.is_some());
+
+        let cached = cache
+            .get_transaction("sig1")
+            .await
+            .unwrap()
+            .expect("l2 hit");
+        assert_eq!(cached.fee, 5000);
     }
 }

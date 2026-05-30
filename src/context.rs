@@ -2,6 +2,7 @@ use crate::data_sources::solana_rpc::SolanaRpc;
 use crate::storage::cache::multi_cache::MultiCache;
 use crate::storage::factory::create_storage;
 use crate::utils::config::Config;
+use crate::utils::errors::Result;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -12,7 +13,7 @@ pub struct AppContext {
 }
 
 impl AppContext {
-    pub async fn new() -> anyhow::Result<Self> {
+    pub async fn new() -> Result<Self> {
         let config = Config::load()?;
         let db = create_storage(&config.storage).await?;
         let cache = Arc::new(MultiCache::new(

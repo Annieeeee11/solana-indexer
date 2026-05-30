@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-anyhow = { version = "1.0.99", features = ["std"] }
 clap = { version = "4.5.46", features = ["derive", "color", "env"] }
 solana-sdk = "3.0.0"
 solana-rpc-client = "3.0.0"
