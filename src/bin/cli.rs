@@ -117,12 +117,12 @@ async fn start() -> anyhow::Result<()> {
         ctx,
         yellowstone,
         SlotPipelineOptions::default(),
-        true,
         on_slot,
         on_tx,
     )
     .await?;
 
+    Cli::info("Indexer stopped");
     Ok(())
 }
 
@@ -138,6 +138,7 @@ async fn track_slots(leaders: bool, transactions: bool) -> anyhow::Result<()> {
         info.push("txs");
     }
     Cli::success(&format!("Tracking: {}", info.join(", ")));
+    Cli::info("Ctrl+C to stop");
 
     let (on_slot, on_tx) = display_handlers();
 
@@ -148,7 +149,6 @@ async fn track_slots(leaders: bool, transactions: bool) -> anyhow::Result<()> {
             show_leaders: leaders,
             show_transactions: transactions,
         },
-        false,
         on_slot,
         on_tx,
     )
@@ -189,6 +189,7 @@ async fn wallet_watch() -> anyhow::Result<()> {
     }
     
     Cli::success(&format!("Watching {} wallet(s)", wallets.len()));
+    Cli::info("Ctrl+C to stop");
     watcher.start().await?;
     Ok(())
 }
@@ -234,7 +235,7 @@ async fn watch_account(address: String) -> anyhow::Result<()> {
         }
     }
 
-    Cli::info("Watching for changes...");
+    Cli::info("Watching for changes... (Ctrl+C to stop)");
     watcher
         .run(|addr, prev, curr| {
             Cli::account_change(addr, prev.lamports, curr.lamports, curr.slot);

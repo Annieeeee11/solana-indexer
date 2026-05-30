@@ -42,23 +42,29 @@ impl AccountWatcher {
         let accounts = self.accounts_to_watch.clone();
 
         loop {
-            ticker.tick().await;
-
-            for address in &accounts {
-                match self.rpc.get_account(address).await {
-                    Ok(current) => {
-                        if let Some(previous) = self.cache.get_account(address).await? {
-                            if previous.lamports != current.lamports
-                                || previous.data != current.data
-                            {
-                                on_change(address, &previous, &current);
+            tokio::select! {
+                _ = ticker.tick() => {
+                    for address in &accounts {
+                        match self.rpc.get_account(address).await {
+                            Ok(current) => {
+                                if let Some(previous) = self.cache.get_account(address).await? {
+                                    if previous.lamports != current.lamports
+                                        || previous.data != current.data
+                                    {
+                                        on_change(address, &previous, &current);
+                                    }
+                                }
+                                self.cache.store_account(current).await?;
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to fetch account {}: {}", address, e);
                             }
                         }
-                        self.cache.store_account(current).await?;
                     }
-                    Err(e) => {
-                        tracing::warn!("Failed to fetch account {}: {}", address, e);
-                    }
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    tracing::info!("Shutdown signal received, stopping account watcher...");
+                    return Ok(());
                 }
             }
         }

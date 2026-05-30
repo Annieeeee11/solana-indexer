@@ -37,7 +37,6 @@ pub async fn run(
     ctx: AppContext,
     yellowstone: Option<Arc<YellowstoneGrpc>>,
     options: SlotPipelineOptions,
-    wait_for_tracker: bool,
     on_slot: Arc<dyn Fn(Slot, Option<String>) + Send + Sync>,
     on_tx: Arc<dyn Fn(TransactionInfo) + Send + Sync>,
 ) -> Result<()> {
@@ -45,7 +44,7 @@ pub async fn run(
     let (tx_tx, tx_rx) = channels::transaction_channel();
 
     let tracker = SlotTracker::new(yellowstone, ctx.rpc.clone(), ctx.cache.clone(), slot_tx, tx_tx);
-    let tracker_handle = tokio::spawn(async move {
+    let mut tracker_handle = tokio::spawn(async move {
         if let Err(e) = tracker.start().await {
             tracing::error!("Tracker error: {}", e);
         }
@@ -55,7 +54,7 @@ pub async fn run(
     let show_leaders = options.show_leaders;
     let show_transactions = options.show_transactions;
 
-    let display_handle = tokio::spawn(async move {
+    let mut display_handle = tokio::spawn(async move {
         let mut slot_rx = slot_rx;
         let mut tx_rx = tx_rx;
 
@@ -77,15 +76,26 @@ pub async fn run(
         }
     });
 
-    if wait_for_tracker {
-        tokio::select! {
-            _ = tracker_handle => {}
-            _ = display_handle => {}
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            tracing::info!("Shutdown signal received, stopping indexer...");
         }
-    } else {
-        let _ = display_handle.await;
-        tracker_handle.abort();
+        result = &mut tracker_handle => {
+            if let Err(e) = result {
+                tracing::error!("Slot tracker task failed: {}", e);
+            }
+        }
+        result = &mut display_handle => {
+            if let Err(e) = result {
+                tracing::error!("Display task failed: {}", e);
+            }
+        }
     }
+
+    tracker_handle.abort();
+    display_handle.abort();
+    let _ = tracker_handle.await;
+    let _ = display_handle.await;
 
     Ok(())
 }
