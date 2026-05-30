@@ -12,6 +12,7 @@ pub struct Config {
 pub struct RpcConfig {
     pub solana_rpc_url: String,
     pub yellowstone_grpc_url: Option<String>,
+    pub yellowstone_grpc_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,6 +33,7 @@ impl Default for Config {
             rpc: RpcConfig {
                 solana_rpc_url: "https://api.mainnet-beta.solana.com".into(),
                 yellowstone_grpc_url: None,
+                yellowstone_grpc_token: None,
             },
             storage: StorageConfig {
                 sqlite_path: "indexer.db".into(),
@@ -54,6 +56,7 @@ impl Config {
                 solana_rpc_url: std::env::var("SOLANA_RPC_URL")
                     .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".into()),
                 yellowstone_grpc_url: std::env::var("YELLOWSTONE_GRPC_URL").ok(),
+                yellowstone_grpc_token: std::env::var("YELLOWSTONE_GRPC_TOKEN").ok(),
             },
             storage: StorageConfig {
                 sqlite_path: std::env::var("SQLITE_DB_PATH")

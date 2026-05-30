@@ -13,10 +13,10 @@ pub struct YellowstoneGrpc {
 }
 
 impl YellowstoneGrpc {
-    pub fn new(url: &str) -> Self {
-        Self { 
-            url: url.to_string(), 
-            token: None,
+    pub fn new(url: &str, token: Option<String>) -> Self {
+        Self {
+            url: url.to_string(),
+            token,
         }
     }
 

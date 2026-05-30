@@ -91,7 +91,10 @@ async fn start() -> anyhow::Result<()> {
     
     let yellowstone = ctx.config.rpc.yellowstone_grpc_url.as_ref().map(|url| {
         tracing::info!("Using Yellowstone gRPC");
-        Arc::new(YellowstoneGrpc::new(url))
+        Arc::new(YellowstoneGrpc::new(
+            url,
+            ctx.config.rpc.yellowstone_grpc_token.clone(),
+        ))
     });
     
     let (slot_tx, mut slot_rx) = mpsc::channel(1000);
