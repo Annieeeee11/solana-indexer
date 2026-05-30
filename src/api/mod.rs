@@ -9,9 +9,10 @@ use crate::storage::cache::multi_cache::MultiCache;
 use crate::utils::errors::{IndexerError, Result};
 use serde::Serialize;
 use std::sync::Arc;
+use tokio::sync::broadcast;
 
 #[derive(Clone)]
-struct ApiState {
+pub struct ApiState {
     cache: Arc<MultiCache>,
 }
 
@@ -29,31 +30,43 @@ pub fn router(cache: Arc<MultiCache>) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/slots/latest", get(latest_slot))
-        .route("/slots/{number}", get(slot_by_number))
-        .route("/transactions/{signature}", get(transaction_by_sig))
-        .route("/accounts/{address}", get(account_by_address))
+        .route("/slots/:number", get(slot_by_number))
+        .route("/transactions/:signature", get(transaction_by_sig))
+        .route("/accounts/:address", get(account_by_address))
         .with_state(ApiState { cache })
 }
 
+/// Standalone HTTP server (Ctrl+C stops). Binds `0.0.0.0` — use behind a firewall in production.
 pub async fn serve(cache: Arc<MultiCache>, port: u16) -> Result<()> {
+    let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
+    tokio::spawn(async move {
+        let _ = tokio::signal::ctrl_c().await;
+        let _ = shutdown_tx.send(());
+    });
+    serve_until_shutdown(cache, port, shutdown_rx).await
+}
+
+/// HTTP server until the shared shutdown broadcast fires (used by `indexer start` + `API_PORT`).
+pub async fn serve_until_shutdown(
+    cache: Arc<MultiCache>,
+    port: u16,
+    mut shutdown: broadcast::Receiver<()>,
+) -> Result<()> {
     let app = router(cache);
     let addr = format!("0.0.0.0:{port}");
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .map_err(|e| IndexerError::ConfigError(format!("Failed to bind {addr}: {e}")))?;
 
-    tracing::info!("HTTP API listening on http://{addr}");
+    tracing::info!("HTTP API listening on http://{addr} (dev: no auth; bind all interfaces)");
 
-    axum::serve(
-        listener,
-        app.into_make_service(),
-    )
-    .with_graceful_shutdown(async {
-        let _ = tokio::signal::ctrl_c().await;
-        tracing::info!("HTTP API shutting down");
-    })
-    .await
-    .map_err(|e| IndexerError::ConfigError(format!("HTTP server error: {e}")))?;
+    axum::serve(listener, app.into_make_service())
+        .with_graceful_shutdown(async move {
+            let _ = shutdown.recv().await;
+            tracing::info!("HTTP API shutting down");
+        })
+        .await
+        .map_err(|e| IndexerError::ConfigError(format!("HTTP server error: {e}")))?;
 
     Ok(())
 }
@@ -70,10 +83,7 @@ async fn latest_slot(State(state): State<ApiState>) -> Response {
     }
 }
 
-async fn slot_by_number(
-    State(state): State<ApiState>,
-    Path(number): Path<u64>,
-) -> Response {
+async fn slot_by_number(State(state): State<ApiState>, Path(number): Path<u64>) -> Response {
     match state.cache.get_slot(number).await {
         Ok(Some(slot)) => Json(slot).into_response(),
         Ok(None) => not_found(&format!("Slot {number} not found")),
@@ -121,4 +131,109 @@ fn api_error(err: IndexerError) -> Response {
         }),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{body::Body, http::Request};
+    use crate::core::types::{Slot, SlotStatus, Transaction};
+    use crate::storage::database::DatabaseStorage;
+    use crate::testing::mock_db::MockDatabase;
+    use tower::ServiceExt;
+
+    fn sample_slot(n: u64) -> Slot {
+        Slot {
+            slot: n,
+            parent: Some(n - 1),
+            status: SlotStatus::Confirmed,
+            timestamp: 1,
+            block_hash: None,
+            block_height: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn health_returns_ok() {
+        let cache = Arc::new(MultiCache::new(10, 10, 10, Arc::new(MockDatabase::new())));
+        let app = router(cache);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn latest_slot_returns_json() {
+        let db = Arc::new(MockDatabase::new());
+        db.store_slot(&sample_slot(42)).await.unwrap();
+        let cache = Arc::new(MultiCache::new(10, 10, 10, db));
+        let app = router(cache);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/slots/latest")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn missing_slot_returns_404() {
+        let cache = Arc::new(MultiCache::new(10, 10, 10, Arc::new(MockDatabase::new())));
+        let app = router(cache);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/slots/999")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn transaction_endpoint_returns_stored_tx() {
+        let db = Arc::new(MockDatabase::new());
+        let tx = Transaction {
+            signature: "sigtest".into(),
+            slot: 1,
+            block_time: None,
+            fee: 100,
+            success: true,
+            accounts: vec![],
+        };
+        db.store_transaction(tx).await.unwrap();
+        let cache = Arc::new(MultiCache::new(10, 10, 10, db));
+        let app = router(cache);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/transactions/sigtest")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
 }

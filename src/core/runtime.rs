@@ -1,9 +1,11 @@
+use crate::api;
 use crate::context::AppContext;
 use crate::core::account_watcher::AccountWatcher;
 use crate::core::slot_pipeline::{self, SlotPipelineOptions};
 use crate::core::types::{AccountState, Slot, TransactionInfo};
-use crate::data_sources::yellowstone_grpc::YellowstoneGrpc;
+use crate::data_sources::YellowstoneSource;
 use crate::utils::errors::Result;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
@@ -12,6 +14,8 @@ use tokio::task::JoinHandle;
 pub struct IndexerOptions {
     pub pipeline: SlotPipelineOptions,
     pub watch_accounts: bool,
+    /// When `Some`, spawns HTTP query API in parallel (also reads `API_PORT` from config on start).
+    pub api_port: Option<u16>,
 }
 
 impl Default for IndexerOptions {
@@ -19,23 +23,31 @@ impl Default for IndexerOptions {
         Self {
             pipeline: SlotPipelineOptions::default(),
             watch_accounts: true,
+            api_port: None,
         }
     }
 }
 
 pub async fn collect_watch_accounts(ctx: &AppContext) -> Result<Vec<String>> {
-    let mut addresses = ctx.cache.get_active_wallets().await?;
-    for addr in &ctx.config.watch_accounts {
-        if !addresses.contains(addr) {
-            addresses.push(addr.clone());
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+
+    for addr in ctx.cache.get_active_wallets().await? {
+        if seen.insert(addr.clone()) {
+            out.push(addr);
         }
     }
-    Ok(addresses)
+    for addr in &ctx.config.watch_accounts {
+        if seen.insert(addr.clone()) {
+            out.push(addr.clone());
+        }
+    }
+    Ok(out)
 }
 
 pub async fn run(
     ctx: AppContext,
-    yellowstone: Option<Arc<YellowstoneGrpc>>,
+    yellowstone: Option<Arc<dyn YellowstoneSource>>,
     options: IndexerOptions,
     on_slot: Arc<dyn Fn(Slot, Option<String>) + Send + Sync>,
     on_tx: Arc<dyn Fn(TransactionInfo) + Send + Sync>,
@@ -60,17 +72,37 @@ pub async fn run(
     )
     .await?;
 
+    let api_port = options.api_port.or(ctx.config.api_port);
+    let mut api_handle = spawn_api_server(&ctx, api_port, &shutdown_tx);
+
     wait_for_shutdown(
         shutdown_tx,
         &mut tracker_handle,
         &mut display_handle,
         &mut watcher_handle,
+        &mut api_handle,
     )
     .await;
 
-    abort_handles(tracker_handle, display_handle, watcher_handle).await;
+    abort_handles(tracker_handle, display_handle, watcher_handle, api_handle).await;
 
     Ok(())
+}
+
+fn spawn_api_server(
+    ctx: &AppContext,
+    port: Option<u16>,
+    shutdown_tx: &broadcast::Sender<()>,
+) -> Option<JoinHandle<()>> {
+    let port = port?;
+    let cache = ctx.cache.clone();
+    let shutdown_rx = shutdown_tx.subscribe();
+    tracing::info!("Starting HTTP query API on port {port} (parallel with indexer)");
+    Some(tokio::spawn(async move {
+        if let Err(e) = api::serve_until_shutdown(cache, port, shutdown_rx).await {
+            tracing::error!("HTTP API error: {e}");
+        }
+    }))
 }
 
 async fn spawn_account_watcher(
@@ -107,7 +139,7 @@ async fn spawn_account_watcher(
             )
             .await
         {
-            tracing::error!("Account watcher error: {}", e);
+            tracing::error!("Account watcher error: {e}");
         }
     })))
 }
@@ -117,6 +149,7 @@ async fn wait_for_shutdown(
     tracker_handle: &mut JoinHandle<()>,
     display_handle: &mut JoinHandle<()>,
     watcher_handle: &mut Option<JoinHandle<()>>,
+    api_handle: &mut Option<JoinHandle<()>>,
 ) {
     let shutdown = async {
         let _ = tokio::signal::ctrl_c().await;
@@ -124,18 +157,38 @@ async fn wait_for_shutdown(
         let _ = shutdown_tx.send(());
     };
 
-    if let Some(wh) = watcher_handle.as_mut() {
-        tokio::select! {
-            () = shutdown => {}
-            result = tracker_handle => log_join_error("Slot tracker", result),
-            result = display_handle => log_join_error("Display", result),
-            result = wh => log_join_error("Account watcher", result),
+    match (watcher_handle.as_mut(), api_handle.as_mut()) {
+        (Some(w), Some(a)) => {
+            tokio::select! {
+                () = shutdown => {}
+                result = tracker_handle => log_join_error("Slot tracker", result),
+                result = display_handle => log_join_error("Display", result),
+                result = w => log_join_error("Account watcher", result),
+                result = a => log_join_error("HTTP API", result),
+            }
         }
-    } else {
-        tokio::select! {
-            () = shutdown => {}
-            result = tracker_handle => log_join_error("Slot tracker", result),
-            result = display_handle => log_join_error("Display", result),
+        (Some(w), None) => {
+            tokio::select! {
+                () = shutdown => {}
+                result = tracker_handle => log_join_error("Slot tracker", result),
+                result = display_handle => log_join_error("Display", result),
+                result = w => log_join_error("Account watcher", result),
+            }
+        }
+        (None, Some(a)) => {
+            tokio::select! {
+                () = shutdown => {}
+                result = tracker_handle => log_join_error("Slot tracker", result),
+                result = display_handle => log_join_error("Display", result),
+                result = a => log_join_error("HTTP API", result),
+            }
+        }
+        (None, None) => {
+            tokio::select! {
+                () = shutdown => {}
+                result = tracker_handle => log_join_error("Slot tracker", result),
+                result = display_handle => log_join_error("Display", result),
+            }
         }
     }
 }
@@ -147,13 +200,18 @@ fn log_join_error(label: &str, result: std::result::Result<(), tokio::task::Join
 }
 
 async fn abort_handles(
-    mut tracker_handle: JoinHandle<()>,
-    mut display_handle: JoinHandle<()>,
+    tracker_handle: JoinHandle<()>,
+    display_handle: JoinHandle<()>,
     watcher_handle: Option<JoinHandle<()>>,
+    api_handle: Option<JoinHandle<()>>,
 ) {
     tracker_handle.abort();
     display_handle.abort();
     if let Some(h) = watcher_handle {
+        h.abort();
+        let _ = h.await;
+    }
+    if let Some(h) = api_handle {
         h.abort();
         let _ = h.await;
     }
@@ -164,42 +222,14 @@ async fn abort_handles(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::cache::multi_cache::MultiCache;
-    use crate::testing::mock_db::MockDatabase;
-    use crate::utils::config::{CacheConfig, Config, RpcConfig, StorageConfig};
-    use std::path::PathBuf;
-
-    fn test_context(wallets: Vec<String>, watch_accounts: Vec<String>) -> AppContext {
-        let db = Arc::new(MockDatabase::with_wallets(wallets));
-        AppContext {
-            config: Config {
-                rpc: RpcConfig {
-                    solana_rpc_url: "http://localhost".into(),
-                    yellowstone_grpc_url: None,
-                    yellowstone_grpc_token: None,
-                },
-                storage: StorageConfig {
-                    sqlite_path: PathBuf::from("test.db"),
-                    postgres_url: None,
-                },
-                cache: CacheConfig {
-                    l1_size: 10,
-                    l2_size: 10,
-                    l3_size: 10,
-                },
-                watch_accounts,
-                api_port: None,
-            },
-            cache: Arc::new(MultiCache::new(10, 10, 10, db)),
-            rpc: Arc::new(crate::data_sources::solana_rpc::SolanaRpc::new("http://localhost")),
-        }
-    }
+    use crate::testing::context::test_context;
 
     #[tokio::test]
     async fn collect_watch_accounts_dedupes_env_and_db() {
         let ctx = test_context(
             vec!["wallet1".into()],
             vec!["wallet2".into(), "wallet1".into()],
+            None,
         );
         let addrs = collect_watch_accounts(&ctx).await.unwrap();
         assert_eq!(addrs.len(), 2);

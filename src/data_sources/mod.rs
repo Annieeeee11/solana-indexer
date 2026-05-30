@@ -19,5 +19,13 @@ pub trait SlotSource: Send + Sync {
     async fn get_slot_leader(&self) -> Result<String>;
 }
 
+/// Real-time slot + transaction streaming via Yellowstone gRPC.
+#[async_trait]
+pub trait YellowstoneSource: Send + Sync {
+    async fn subscribe_with_transactions(
+        &self,
+    ) -> Result<(mpsc::Receiver<Slot>, mpsc::Receiver<TransactionInfo>)>;
+}
+
 pub mod solana_rpc;
 pub mod yellowstone_grpc;

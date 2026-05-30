@@ -1,13 +1,12 @@
 use crate::core::types::{Slot, TransactionInfo};
-use crate::data_sources::SlotSource;
-use crate::data_sources::yellowstone_grpc::YellowstoneGrpc;
+use crate::data_sources::{SlotSource, YellowstoneSource};
 use crate::storage::cache::multi_cache::MultiCache;
 use crate::utils::errors::{IndexerError, Result};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
 pub struct SlotTracker {
-    yellowstone: Option<Arc<YellowstoneGrpc>>,
+    yellowstone: Option<Arc<dyn YellowstoneSource>>,
     rpc: Arc<dyn SlotSource>,
     cache: Arc<MultiCache>,
     slot_tx: mpsc::Sender<Slot>,
@@ -16,7 +15,7 @@ pub struct SlotTracker {
 
 impl SlotTracker {
     pub fn new(
-        yellowstone: Option<Arc<YellowstoneGrpc>>,
+        yellowstone: Option<Arc<dyn YellowstoneSource>>,
         rpc: Arc<dyn SlotSource>,
         cache: Arc<MultiCache>,
         slot_tx: mpsc::Sender<Slot>,

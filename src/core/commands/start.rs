@@ -14,6 +14,8 @@ pub async fn start() -> Result<()> {
     let on_account_change = account_change_handler();
 
     let watch_count = runtime::collect_watch_accounts(&ctx).await?.len();
+    let api_port = ctx.config.api_port;
+
     Cli::success("Indexer running");
     if watch_count > 0 {
         Cli::info(&format!(
@@ -23,12 +25,20 @@ pub async fn start() -> Result<()> {
     } else {
         Cli::info("Slot pipeline running (add wallets or WATCH_ACCOUNTS to enable watcher)");
     }
+    if let Some(port) = api_port {
+        Cli::info(&format!(
+            "HTTP query API on port {port} (parallel — set API_PORT in .env)"
+        ));
+    }
     Cli::info("Ctrl+C to stop");
 
     runtime::run(
         ctx,
         yellowstone,
-        IndexerOptions::default(),
+        IndexerOptions {
+            api_port,
+            ..IndexerOptions::default()
+        },
         on_slot,
         on_tx,
         on_account_change,

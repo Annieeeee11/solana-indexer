@@ -133,3 +133,12 @@ impl YellowstoneGrpc {
         Ok((slot_rx, tx_rx))
     }
 }
+
+#[async_trait::async_trait]
+impl crate::data_sources::YellowstoneSource for YellowstoneGrpc {
+    async fn subscribe_with_transactions(
+        &self,
+    ) -> Result<(mpsc::Receiver<Slot>, mpsc::Receiver<TransactionInfo>)> {
+        YellowstoneGrpc::subscribe_with_transactions(self).await
+    }
+}

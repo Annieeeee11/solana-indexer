@@ -2,6 +2,7 @@ use crate::context::AppContext;
 use crate::core::channels;
 use crate::core::slot_tracker::SlotTracker;
 use crate::core::types::{Slot, TransactionInfo};
+use crate::data_sources::YellowstoneSource;
 use crate::data_sources::yellowstone_grpc::YellowstoneGrpc;
 use crate::utils::config::RpcConfig;
 use crate::utils::errors::Result;
@@ -24,20 +25,20 @@ impl Default for SlotPipelineOptions {
     }
 }
 
-pub fn yellowstone_client(config: &RpcConfig) -> Option<Arc<YellowstoneGrpc>> {
+pub fn yellowstone_client(config: &RpcConfig) -> Option<Arc<dyn YellowstoneSource>> {
     config.yellowstone_grpc_url.as_ref().map(|url| {
         tracing::info!("Using Yellowstone gRPC");
         Arc::new(YellowstoneGrpc::new(
             url,
             config.yellowstone_grpc_token.clone(),
-        ))
+        )) as Arc<dyn YellowstoneSource>
     })
 }
 
 /// Spawns SlotTracker and the display consumer. Caller owns shutdown via `shutdown` sender.
 pub fn spawn(
     ctx: AppContext,
-    yellowstone: Option<Arc<YellowstoneGrpc>>,
+    yellowstone: Option<Arc<dyn YellowstoneSource>>,
     options: SlotPipelineOptions,
     on_slot: Arc<dyn Fn(Slot, Option<String>) + Send + Sync>,
     on_tx: Arc<dyn Fn(TransactionInfo) + Send + Sync>,
@@ -95,7 +96,7 @@ pub fn spawn(
 /// Standalone pipeline run (track slots) with its own Ctrl+C handler.
 pub async fn run(
     ctx: AppContext,
-    yellowstone: Option<Arc<YellowstoneGrpc>>,
+    yellowstone: Option<Arc<dyn YellowstoneSource>>,
     options: SlotPipelineOptions,
     on_slot: Arc<dyn Fn(Slot, Option<String>) + Send + Sync>,
     on_tx: Arc<dyn Fn(TransactionInfo) + Send + Sync>,

@@ -10,6 +10,7 @@ pub async fn serve(port: Option<u16>) -> Result<()> {
 
     Cli::success(&format!("Starting HTTP query API on port {port}"));
     Cli::info("Endpoints: /health, /slots/latest, /slots/{{n}}, /transactions/{{sig}}, /accounts/{{addr}}");
+    Cli::info("Dev only: binds 0.0.0.0 with no auth — use a firewall or reverse proxy in production");
     Cli::info("Ctrl+C to stop");
 
     api::serve(ctx.cache, port).await
