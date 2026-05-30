@@ -137,13 +137,18 @@ impl SolanaRpc {
                 }
             };
 
+            let instruction_count = match &ui_tx.message {
+                UiMessage::Parsed(p) => p.instructions.len(),
+                UiMessage::Raw(r) => r.instructions.len(),
+            };
+
             txs.push(TransactionInfo {
                 signature: sig.clone(),
                 slot,
                 success: meta.err.is_none(),
                 fee: meta.fee,
                 program,
-                instructions: meta.log_messages.as_ref().map(|l| l.len()).unwrap_or(0),
+                instructions: instruction_count,
                 compute_units: meta.compute_units_consumed.clone().unwrap_or(0),
                 accounts,
                 timestamp: chrono::Utc::now().timestamp(),

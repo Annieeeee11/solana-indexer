@@ -71,7 +71,7 @@ impl YellowstoneGrpc {
             success: meta.map(|m| m.err.is_none()).unwrap_or(false),
             fee: meta.map(|m| m.fee).unwrap_or(0),
             program,
-            instructions: meta.map(|m| m.log_messages.len()).unwrap_or(0),
+            instructions: msg.instructions.len(),
             compute_units: meta.and_then(|m| m.compute_units_consumed).unwrap_or(0),
             accounts,
             timestamp: chrono::Utc::now().timestamp(),
