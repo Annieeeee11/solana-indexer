@@ -1,6 +1,46 @@
-use crate::utils::errors::Result;
+use crate::utils::errors::{IndexerError, Result};
 use sqlx::postgres::PgPool;
 use sqlx::sqlite::SqlitePool;
+
+fn is_modified_migration_error(err: &sqlx::migrate::MigrateError) -> bool {
+    err.to_string()
+        .contains("previously applied but has been modified")
+}
+
+macro_rules! run_migrations {
+    ($pool:expr) => {{
+        match sqlx::migrate!("./migrations").run($pool).await {
+            Ok(()) => Ok(()),
+            Err(e) if is_modified_migration_error(&e) => {
+                if std::env::var("ALLOW_MIGRATION_RESET").ok().as_deref() != Some("1") {
+                    return Err(IndexerError::ConfigError(format!(
+                        "Migration checksum mismatch: {e}. \
+                         Set ALLOW_MIGRATION_RESET=1 in development to re-apply migrations, \
+                         or delete the database and start fresh."
+                    )));
+                }
+
+                tracing::warn!(
+                    "ALLOW_MIGRATION_RESET=1: clearing migration history and re-applying all migrations"
+                );
+                sqlx::query("DELETE FROM _sqlx_migrations")
+                    .execute($pool)
+                    .await?;
+                sqlx::migrate!("./migrations").run($pool).await?;
+                Ok(())
+            }
+            Err(e) => Err(e.into()),
+        }
+    }};
+}
+
+pub async fn run_sqlite_migrations(pool: &SqlitePool) -> Result<()> {
+    run_migrations!(pool)
+}
+
+pub async fn run_postgres_migrations(pool: &PgPool) -> Result<()> {
+    run_migrations!(pool)
+}
 
 macro_rules! row_mappers {
     ($mod_name:ident, $row:ty) => {
@@ -51,30 +91,3 @@ macro_rules! row_mappers {
 
 row_mappers!(sqlite, sqlx::sqlite::SqliteRow);
 row_mappers!(postgres, sqlx::postgres::PgRow);
-
-macro_rules! run_migrations_for {
-    ($pool:expr) => {{
-        if let Err(e) = sqlx::migrate!("./migrations").run($pool).await {
-            let err_str = e.to_string();
-            if err_str.contains("previously applied but has been modified") {
-                tracing::warn!("Migration checksum mismatch detected. Resetting migration history...");
-                sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 1")
-                    .execute($pool)
-                    .await
-                    .ok();
-                sqlx::migrate!("./migrations").run($pool).await?;
-            } else {
-                return Err(e.into());
-            }
-        }
-        Ok(())
-    }};
-}
-
-pub async fn run_sqlite_migrations(pool: &SqlitePool) -> Result<()> {
-    run_migrations_for!(pool)
-}
-
-pub async fn run_postgres_migrations(pool: &PgPool) -> Result<()> {
-    run_migrations_for!(pool)
-}
