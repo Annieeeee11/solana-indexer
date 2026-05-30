@@ -32,14 +32,12 @@ enum Cmd {
 
 #[derive(Subcommand)]
 enum Track {
-    /// Track slots
+    /// Track slots (persisted by SlotTracker → MultiCache)
     Slots {
         #[arg(short, long)]
         leaders: bool,
         #[arg(short, long)]
         transactions: bool,
-        #[arg(short, long)]
-        save: bool,
     },
     /// Manage wallets
     Wallets {
@@ -74,7 +72,7 @@ async fn main() -> anyhow::Result<()> {
     match Args::parse().cmd {
         Cmd::Start => start().await,
         Cmd::Track { what } => match what {
-            Track::Slots { leaders, transactions, save } => track_slots(leaders, transactions, save).await,
+            Track::Slots { leaders, transactions } => track_slots(leaders, transactions).await,
             Track::Wallets { action } => match action {
                 Wallet::Add { address, name } => wallet_add(address, name).await,
                 Wallet::Remove { address } => wallet_remove(address).await,
@@ -107,15 +105,13 @@ async fn start() -> anyhow::Result<()> {
     });
     
     let rpc = ctx.rpc.clone();
-    let cache = ctx.cache.clone();
-    
+
     let proc_handle = tokio::spawn(async move {
         loop {
             tokio::select! {
                 Some(slot) = slot_rx.recv() => {
                     let leader = rpc.get_slot_leader().await.ok();
                     Cli::slot(&slot, leader.as_deref());
-                    let _ = cache.store_slot(slot).await;
                 }
                 Some(tx) = tx_rx.recv() => {
                     Cli::transaction(&tx.signature, tx.slot, tx.success, tx.fee, &tx.program, tx.instructions, tx.compute_units);
@@ -136,35 +132,35 @@ async fn start() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn track_slots(leaders: bool, transactions: bool, save: bool) -> 
-anyhow::Result<()> {
+async fn track_slots(leaders: bool, transactions: bool) -> anyhow::Result<()> {
     Cli::banner();
     let ctx = AppContext::new().await?;
-    
+
     let (slot_tx, mut slot_rx) = mpsc::channel(1000);
     let (tx_tx, mut tx_rx) = mpsc::channel(10000);
-    
+
     let tracker = SlotTracker::new(None, ctx.rpc.clone(), ctx.cache.clone(), slot_tx, tx_tx);
     let handle = tokio::spawn(async move {
         let _ = tracker.start().await;
     });
-    
+
     let mut info = vec!["slots"];
-    if leaders { info.push("leaders"); }
-    if transactions { info.push("txs"); }
-    if save { info.push("saving"); }
-    
+    if leaders {
+        info.push("leaders");
+    }
+    if transactions {
+        info.push("txs");
+    }
+
     Cli::success(&format!("Tracking: {}", info.join(", ")));
-    
+
     let rpc = ctx.rpc.clone();
-    let cache = ctx.cache.clone();
-    
+
     loop {
         tokio::select! {
             Some(slot) = slot_rx.recv() => {
                 let leader = if leaders { rpc.get_slot_leader().await.ok() } else { None };
                 Cli::slot(&slot, leader.as_deref());
-                if save { let _ = cache.store_slot(slot).await; }
             }
             Some(tx) = tx_rx.recv(), if transactions => {
                 Cli::transaction(&tx.signature, tx.slot, tx.success, tx.fee, &tx.program, tx.instructions, tx.compute_units);
