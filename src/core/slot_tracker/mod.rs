@@ -64,7 +64,9 @@ impl SlotTracker {
             tokio::select! {
                 slot = slot_stream.recv() => {
                     let Some(slot) = slot else {
-                        return Err(IndexerError::RpcError("Yellowstone slot stream closed".into()));
+                        return Err(IndexerError::ChannelError(
+                            "Yellowstone slot stream closed".into(),
+                        ));
                     };
                     
                     tracing::debug!("Received slot from Yellowstone: {}", slot.slot);
@@ -80,7 +82,9 @@ impl SlotTracker {
                 }
                 tx = tx_stream.recv() => {
                     let Some(tx) = tx else {
-                        return Err(IndexerError::RpcError("Yellowstone tx stream closed".into()));
+                        return Err(IndexerError::ChannelError(
+                            "Yellowstone tx stream closed".into(),
+                        ));
                     };
                     
                     tracing::debug!("Received tx from Yellowstone: {}", tx.signature);

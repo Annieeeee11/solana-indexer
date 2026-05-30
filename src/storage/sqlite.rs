@@ -84,7 +84,7 @@ impl DatabaseStorage for SqliteStorage {
     }
 
     async fn store_transaction(&self, tx: Transaction) -> Result<()> {
-        let accounts = serde_json::to_string(&tx.accounts).map_err(|e| IndexerError::DatabaseError(e.to_string()))?;
+        let accounts = serde_json::to_string(&tx.accounts)?;
         sqlx::query("INSERT OR REPLACE INTO transactions (signature, slot, block_time, fee, success, accounts) VALUES (?1, ?2, ?3, ?4, ?5, ?6)")
             .bind(&tx.signature).bind(tx.slot as i64).bind(tx.block_time).bind(tx.fee as i64).bind(tx.success).bind(&accounts)
             .execute(&self.pool).await?;
