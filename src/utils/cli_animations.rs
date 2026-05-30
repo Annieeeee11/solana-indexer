@@ -31,11 +31,11 @@ fn format_number(n: u64) -> String {
     out
 }
 
-struct Box {
+struct UiFrame {
     color: (u8, u8, u8),
 }
 
-impl Box {
+impl UiFrame {
     fn new(color: (u8, u8, u8)) -> Self {
         Self { color }
     }
@@ -125,7 +125,7 @@ impl Cli {
     }
 
     pub fn error(context: &str, msg: &str) {
-        let b = Box::new(theme::ERROR);
+        let b = UiFrame::new(theme::ERROR);
         println!();
         b.top();
         b.title(icons::ERROR, &format!("ERROR: {}", context));
@@ -144,7 +144,7 @@ impl Cli {
         let parent = slot.parent.map(|p| p.to_string()).unwrap_or_else(|| "-".into());
         let time = format_timestamp(slot.timestamp);
 
-        let b = Box::new(theme::CYAN);
+        let b = UiFrame::new(theme::CYAN);
         println!();
         b.top();
         b.title(icons::SLOT, "SLOT");
@@ -168,7 +168,7 @@ impl Cli {
             ("TX FAILED", theme::ERROR)
         };
 
-        let b = Box::new(color);
+        let b = UiFrame::new(color);
         println!();
         b.top();
         b.title(icons::TRANSACTION, label);
@@ -189,7 +189,7 @@ impl Cli {
         let sol = acc.lamports as f64 / 1_000_000_000.0;
         let exec = if acc.executable { "Yes".bright_green() } else { "No".bright_black() };
 
-        let b = Box::new(theme::CYAN);
+        let b = UiFrame::new(theme::CYAN);
         println!();
         b.top();
         b.title(icons::DATABASE, "ACCOUNT");
@@ -211,7 +211,7 @@ impl Cli {
             ("DATA CHANGED", theme::WARNING)
         };
 
-        let b = Box::new(color);
+        let b = UiFrame::new(color);
         println!();
         b.top();
         b.title(icons::MONEY, label);

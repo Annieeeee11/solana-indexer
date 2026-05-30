@@ -112,18 +112,24 @@ impl SlotTracker {
             if let Ok(transactions) = self.rpc.get_block_with_transactions(slot.slot).await {
                 for tx in transactions {
                     if self.tx_tx.send(tx.clone()).await.is_err() {
+                        tracing::error!("Failed to send tx to pipeline");
                         continue;
                     }
-                    
-                    let _ = self.cache.store_transaction(tx.into()).await;
+
+                    if let Err(e) = self.cache.store_transaction(tx.into()).await {
+                        tracing::error!("Failed to cache transaction: {}", e);
+                    }
                 }
             }
 
             if self.slot_tx.send(slot.clone()).await.is_err() {
+                tracing::error!("Failed to send slot to pipeline");
                 continue;
             }
-            
-            let _ = self.cache.store_slot(slot).await;
+
+            if let Err(e) = self.cache.store_slot(slot).await {
+                tracing::error!("Failed to cache slot: {}", e);
+            }
         }
 
         Ok(())
