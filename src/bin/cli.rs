@@ -2,9 +2,8 @@ use clap::{Parser, Subcommand};
 use colored::*;
 use solana_indexer::context::AppContext;
 use solana_indexer::core::account_watcher::AccountWatcher;
-use solana_indexer::core::channels;
-use solana_indexer::core::slot_tracker::SlotTracker;
-use solana_indexer::data_sources::yellowstone_grpc::YellowstoneGrpc;
+use solana_indexer::core::slot_pipeline::{self, SlotPipelineOptions};
+use solana_indexer::core::types::{Slot, TransactionInfo};
 use solana_indexer::utils::cli_animations::Cli;
 use solana_indexer::utils::logger;
 use std::sync::Arc;
@@ -83,53 +82,46 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
+fn display_handlers() -> (
+    Arc<dyn Fn(Slot, Option<String>) + Send + Sync>,
+    Arc<dyn Fn(TransactionInfo) + Send + Sync>,
+) {
+    let on_slot = Arc::new(|slot: Slot, leader: Option<String>| {
+        Cli::slot(&slot, leader.as_deref())
+    });
+    let on_tx = Arc::new(|tx: TransactionInfo| {
+        Cli::transaction(
+            &tx.signature,
+            tx.slot,
+            tx.success,
+            tx.fee,
+            &tx.program,
+            tx.instructions,
+            tx.compute_units,
+        )
+    });
+    (on_slot, on_tx)
+}
+
 async fn start() -> anyhow::Result<()> {
     Cli::banner();
-    
+
     let ctx = AppContext::new().await?;
-    
-    let yellowstone = ctx.config.rpc.yellowstone_grpc_url.as_ref().map(|url| {
-        tracing::info!("Using Yellowstone gRPC");
-        Arc::new(YellowstoneGrpc::new(
-            url,
-            ctx.config.rpc.yellowstone_grpc_token.clone(),
-        ))
-    });
-    
-    let (slot_tx, mut slot_rx) = channels::slot_channel();
-    let (tx_tx, mut tx_rx) = channels::transaction_channel();
-
-    let tracker = SlotTracker::new(yellowstone, ctx.rpc.clone(), ctx.cache.clone(), slot_tx, tx_tx);
-    let tracker_handle = tokio::spawn(async move {
-        if let Err(e) = tracker.start().await {
-            tracing::error!("Tracker error: {}", e);
-        }
-    });
-    
-    let rpc = ctx.rpc.clone();
-
-    let proc_handle = tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                Some(slot) = slot_rx.recv() => {
-                    let leader = rpc.get_slot_leader().await.ok();
-                    Cli::slot(&slot, leader.as_deref());
-                }
-                Some(tx) = tx_rx.recv() => {
-                    Cli::transaction(&tx.signature, tx.slot, tx.success, tx.fee, &tx.program, tx.instructions, tx.compute_units);
-                }
-                else => break,
-            }
-        }
-    });
+    let yellowstone = slot_pipeline::yellowstone_client(&ctx.config.rpc);
+    let (on_slot, on_tx) = display_handlers();
 
     Cli::success("Indexer running");
     Cli::info("Ctrl+C to stop");
-    
-    tokio::select! {
-        _ = tracker_handle => {}
-        _ = proc_handle => {}
-    }
+
+    slot_pipeline::run(
+        ctx,
+        yellowstone,
+        SlotPipelineOptions::default(),
+        true,
+        on_slot,
+        on_tx,
+    )
+    .await?;
 
     Ok(())
 }
@@ -138,14 +130,6 @@ async fn track_slots(leaders: bool, transactions: bool) -> anyhow::Result<()> {
     Cli::banner();
     let ctx = AppContext::new().await?;
 
-    let (slot_tx, mut slot_rx) = channels::slot_channel();
-    let (tx_tx, mut tx_rx) = channels::transaction_channel();
-
-    let tracker = SlotTracker::new(None, ctx.rpc.clone(), ctx.cache.clone(), slot_tx, tx_tx);
-    let handle = tokio::spawn(async move {
-        let _ = tracker.start().await;
-    });
-
     let mut info = vec!["slots"];
     if leaders {
         info.push("leaders");
@@ -153,25 +137,23 @@ async fn track_slots(leaders: bool, transactions: bool) -> anyhow::Result<()> {
     if transactions {
         info.push("txs");
     }
-
     Cli::success(&format!("Tracking: {}", info.join(", ")));
 
-    let rpc = ctx.rpc.clone();
+    let (on_slot, on_tx) = display_handlers();
 
-    loop {
-        tokio::select! {
-            Some(slot) = slot_rx.recv() => {
-                let leader = if leaders { rpc.get_slot_leader().await.ok() } else { None };
-                Cli::slot(&slot, leader.as_deref());
-            }
-            Some(tx) = tx_rx.recv(), if transactions => {
-                Cli::transaction(&tx.signature, tx.slot, tx.success, tx.fee, &tx.program, tx.instructions, tx.compute_units);
-            }
-            else => break,
-        }
-    }
-    
-    handle.abort();
+    slot_pipeline::run(
+        ctx,
+        None,
+        SlotPipelineOptions {
+            show_leaders: leaders,
+            show_transactions: transactions,
+        },
+        false,
+        on_slot,
+        on_tx,
+    )
+    .await?;
+
     Ok(())
 }
 
