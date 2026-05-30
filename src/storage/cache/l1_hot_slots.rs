@@ -34,15 +34,6 @@ impl L1HotSlots {
 
     pub async fn get_latest_slot(&self) -> Option<Slot> {
         let cache = self.cache.read().await;
-        cache.values()
-            .max_by_key(|slot| slot.slot)
-            .cloned()
-    }
-
-    pub async fn get_all_slots(&self) -> Vec<Slot> {
-        self.cache.read().await
-            .values()
-            .cloned()
-            .collect()
+        cache.values().max_by_key(|slot| slot.slot).cloned()
     }
 }

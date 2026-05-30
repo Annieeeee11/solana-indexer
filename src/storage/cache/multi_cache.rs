@@ -46,4 +46,40 @@ impl MultiCache {
     pub async fn store_account(&self, account: AccountState) -> Result<()> {
         self.accounts.store(account).await
     }
+
+    /// L1 → DB fallback (populates L1 on DB hit).
+    pub async fn get_slot(&self, slot: u64) -> Result<Option<Slot>> {
+        if let Some(cached) = self.l1.get(slot).await {
+            return Ok(Some(cached));
+        }
+        if let Some(slot) = self.accounts.db().get_slot(slot).await? {
+            self.l1.insert(slot.clone()).await;
+            return Ok(Some(slot));
+        }
+        Ok(None)
+    }
+
+    /// L1 hot cache → DB fallback (populates L1 on DB hit).
+    pub async fn get_latest_slot(&self) -> Result<Option<Slot>> {
+        if let Some(cached) = self.l1.get_latest_slot().await {
+            return Ok(Some(cached));
+        }
+        if let Some(slot) = self.accounts.db().get_latest_slot().await? {
+            self.l1.insert(slot.clone()).await;
+            return Ok(Some(slot));
+        }
+        Ok(None)
+    }
+
+    /// L2 → DB fallback (populates L2 on DB hit).
+    pub async fn get_transaction(&self, signature: &str) -> Result<Option<Transaction>> {
+        if let Some(cached) = self.l2.get(signature).await {
+            return Ok(Some(cached));
+        }
+        if let Some(tx) = self.accounts.db().get_transaction(signature).await? {
+            self.l2.insert(tx.clone()).await;
+            return Ok(Some(tx));
+        }
+        Ok(None)
+    }
 }
