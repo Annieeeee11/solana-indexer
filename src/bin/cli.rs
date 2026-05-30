@@ -5,7 +5,6 @@ use solana_indexer::core::account_watcher::AccountWatcher;
 use solana_indexer::core::slot_tracker::SlotTracker;
 use solana_indexer::data_sources::yellowstone_grpc::YellowstoneGrpc;
 use solana_indexer::utils::cli_animations::Cli;
-use solana_indexer::utils::config::Config;
 use solana_indexer::utils::logger;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -238,38 +237,26 @@ async fn wallet_list(detailed: bool) -> anyhow::Result<()> {
 
 async fn watch_account(address: String) -> anyhow::Result<()> {
     Cli::banner();
-    const POLL_INTERVAL_SECS: u64 = 5;
-    
-    let config = Config::load()?;
-    Cli::connecting(&config.rpc.solana_rpc_url);
-    
+
     let ctx = AppContext::new().await?;
-    
-    match ctx.rpc.get_account(&address).await {
-        Ok(acc) => {
-            Cli::account(&acc);
-            ctx.cache.store_account(acc).await?;
-        }
+    Cli::connecting(&ctx.config.rpc.solana_rpc_url);
+
+    let mut watcher = AccountWatcher::new(ctx.rpc, ctx.cache);
+    watcher.add_account(address.clone());
+
+    match watcher.fetch_account(&address).await {
+        Ok(acc) => Cli::account(&acc),
         Err(e) => {
             Cli::error("Fetch", &e.to_string());
             return Ok(());
         }
     }
-    
+
     Cli::info("Watching for changes...");
-    
-    let mut tick = tokio::time::interval(tokio::time::Duration::from_secs(POLL_INTERVAL_SECS));
-    
-    loop {
-        tick.tick().await;
-        
-        if let Ok(curr) = ctx.rpc.get_account(&address).await {
-            if let Ok(Some(prev)) = ctx.cache.get_account(&address).await {
-                if prev.lamports != curr.lamports || prev.data != curr.data {
-                    Cli::account_change(&address, prev.lamports, curr.lamports, curr.slot);
-                }
-            }
-            let _ = ctx.cache.store_account(curr).await;
-        }
-    }
+    watcher
+        .run(|addr, prev, curr| {
+            Cli::account_change(addr, prev.lamports, curr.lamports, curr.slot);
+        })
+        .await?;
+    Ok(())
 }
