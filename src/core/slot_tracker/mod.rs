@@ -1,4 +1,4 @@
-use crate::core::types::{Slot, Transaction, TransactionInfo};
+use crate::core::types::{Slot, TransactionInfo};
 use crate::data_sources::solana_rpc::SolanaRpc;
 use crate::data_sources::yellowstone_grpc::YellowstoneGrpc;
 use crate::storage::cache::multi_cache::MultiCache;
@@ -94,16 +94,7 @@ impl SlotTracker {
                         continue;
                     }
                     
-                    let transaction = Transaction {
-                        signature: tx.signature,
-                        slot: tx.slot,
-                        block_time: Some(tx.timestamp),
-                        fee: tx.fee,
-                        success: tx.success,
-                        accounts: tx.accounts,
-                    };
-                    
-                    if let Err(e) = self.cache.store_transaction(transaction).await {
+                    if let Err(e) = self.cache.store_transaction(tx.into()).await {
                         tracing::error!("Failed to cache transaction: {}", e);
                     }
                 }
@@ -124,16 +115,7 @@ impl SlotTracker {
                         continue;
                     }
                     
-                    let transaction = Transaction {
-                        signature: tx.signature,
-                        slot: tx.slot,
-                        block_time: Some(tx.timestamp),
-                        fee: tx.fee,
-                        success: tx.success,
-                        accounts: tx.accounts,
-                    };
-                    
-                    let _ = self.cache.store_transaction(transaction).await;
+                    let _ = self.cache.store_transaction(tx.into()).await;
                 }
             }
 

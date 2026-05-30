@@ -54,6 +54,19 @@ pub struct TransactionInfo {
     pub timestamp: i64,
 }
 
+impl From<TransactionInfo> for Transaction {
+    fn from(info: TransactionInfo) -> Self {
+        Self {
+            signature: info.signature,
+            slot: info.slot,
+            block_time: Some(info.timestamp),
+            fee: info.fee,
+            success: info.success,
+            accounts: info.accounts,
+        }
+    }
+}
+
 // Current state of a Solana account.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountState {
