@@ -6,6 +6,8 @@ use crate::data_sources::yellowstone_grpc::YellowstoneGrpc;
 use crate::utils::config::RpcConfig;
 use crate::utils::errors::Result;
 use std::sync::Arc;
+use tokio::sync::broadcast;
+use tokio::task::JoinHandle;
 
 #[derive(Clone, Copy)]
 pub struct SlotPipelineOptions {
@@ -32,19 +34,27 @@ pub fn yellowstone_client(config: &RpcConfig) -> Option<Arc<YellowstoneGrpc>> {
     })
 }
 
-/// Runs SlotTracker → channels → handlers. Persistence stays in SlotTracker.
-pub async fn run(
+/// Spawns SlotTracker and the display consumer. Caller owns shutdown via `shutdown` sender.
+pub fn spawn(
     ctx: AppContext,
     yellowstone: Option<Arc<YellowstoneGrpc>>,
     options: SlotPipelineOptions,
     on_slot: Arc<dyn Fn(Slot, Option<String>) + Send + Sync>,
     on_tx: Arc<dyn Fn(TransactionInfo) + Send + Sync>,
-) -> Result<()> {
+    shutdown: broadcast::Sender<()>,
+) -> (JoinHandle<()>, JoinHandle<()>) {
     let (slot_tx, slot_rx) = channels::slot_channel();
     let (tx_tx, tx_rx) = channels::transaction_channel();
 
-    let tracker = SlotTracker::new(yellowstone, ctx.rpc.clone(), ctx.cache.clone(), slot_tx, tx_tx);
-    let mut tracker_handle = tokio::spawn(async move {
+    let tracker = SlotTracker::new(
+        yellowstone,
+        ctx.rpc.clone(),
+        ctx.cache.clone(),
+        slot_tx,
+        tx_tx,
+    );
+
+    let tracker_handle = tokio::spawn(async move {
         if let Err(e) = tracker.start().await {
             tracing::error!("Tracker error: {}", e);
         }
@@ -53,13 +63,16 @@ pub async fn run(
     let rpc = ctx.rpc;
     let show_leaders = options.show_leaders;
     let show_transactions = options.show_transactions;
+    let mut shutdown_rx = shutdown.subscribe();
 
-    let mut display_handle = tokio::spawn(async move {
+    let display_handle = tokio::spawn(async move {
         let mut slot_rx = slot_rx;
         let mut tx_rx = tx_rx;
 
         loop {
             tokio::select! {
+                biased;
+                _ = shutdown_rx.recv() => break,
                 Some(slot) = slot_rx.recv() => {
                     let leader = if show_leaders {
                         rpc.get_slot_leader().await.ok()
@@ -76,9 +89,25 @@ pub async fn run(
         }
     });
 
+    (tracker_handle, display_handle)
+}
+
+/// Standalone pipeline run (track slots) with its own Ctrl+C handler.
+pub async fn run(
+    ctx: AppContext,
+    yellowstone: Option<Arc<YellowstoneGrpc>>,
+    options: SlotPipelineOptions,
+    on_slot: Arc<dyn Fn(Slot, Option<String>) + Send + Sync>,
+    on_tx: Arc<dyn Fn(TransactionInfo) + Send + Sync>,
+) -> Result<()> {
+    let (shutdown_tx, _) = broadcast::channel(1);
+    let (mut tracker_handle, mut display_handle) =
+        spawn(ctx, yellowstone, options, on_slot, on_tx, shutdown_tx.clone());
+
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
-            tracing::info!("Shutdown signal received, stopping indexer...");
+            tracing::info!("Shutdown signal received, stopping pipeline...");
+            let _ = shutdown_tx.send(());
         }
         result = &mut tracker_handle => {
             if let Err(e) = result {

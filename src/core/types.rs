@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,15 +21,19 @@ pub enum SlotStatus {
     Finalized,
 }
 
-impl SlotStatus {
-    pub fn from_str(s: &str) -> Self {
-        match s {
+impl FromStr for SlotStatus {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        Ok(match s {
             "Finalized" => SlotStatus::Finalized,
             "Confirmed" => SlotStatus::Confirmed,
             _ => SlotStatus::Processed,
-        }
+        })
     }
+}
 
+impl SlotStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
             SlotStatus::Processed => "Processed",

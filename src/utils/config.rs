@@ -5,6 +5,8 @@ pub struct Config {
     pub rpc: RpcConfig,
     pub storage: StorageConfig,
     pub cache: CacheConfig,
+    /// Extra comma-separated addresses to watch on `indexer start`.
+    pub watch_accounts: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -24,6 +26,7 @@ pub struct StorageConfig {
 pub struct CacheConfig {
     pub l1_size: usize,
     pub l2_size: usize,
+    pub l3_size: usize,
 }
 
 impl Config {
@@ -52,7 +55,21 @@ impl Config {
                     .ok()
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(10000),
+                l3_size: std::env::var("CACHE_L3_SIZE")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(5000),
             },
+            watch_accounts: std::env::var("WATCH_ACCOUNTS")
+                .ok()
+                .map(|s| {
+                    s.split(',')
+                        .map(str::trim)
+                        .filter(|a| !a.is_empty())
+                        .map(String::from)
+                        .collect()
+                })
+                .unwrap_or_default(),
         })
     }
 }
@@ -67,5 +84,6 @@ mod tests {
         assert!(config.rpc.solana_rpc_url.contains("solana.com"));
         assert_eq!(config.cache.l1_size, 1000);
         assert_eq!(config.cache.l2_size, 10000);
+        assert_eq!(config.cache.l3_size, 5000);
     }
 }
