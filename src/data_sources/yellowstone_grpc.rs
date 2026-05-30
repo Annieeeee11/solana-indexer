@@ -1,3 +1,4 @@
+use crate::core::channels;
 use crate::core::types::{Slot, SlotStatus, TransactionInfo};
 use crate::utils::errors::{IndexerError, Result};
 use futures::{SinkExt, StreamExt};
@@ -78,8 +79,8 @@ impl YellowstoneGrpc {
     }
 
     pub async fn subscribe_with_transactions(&self) -> Result<(mpsc::Receiver<Slot>, mpsc::Receiver<TransactionInfo>)> {
-        let (slot_tx, slot_rx) = mpsc::channel(1000);
-        let (tx_tx, tx_rx) = mpsc::channel(10000);
+        let (slot_tx, slot_rx) = channels::slot_channel();
+        let (tx_tx, tx_rx) = channels::transaction_channel();
 
         let mut builder = GeyserGrpcBuilder::from_shared(self.url.clone())
             .map_err(|e| IndexerError::ConfigError(e.to_string()))?;

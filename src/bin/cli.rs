@@ -2,12 +2,12 @@ use clap::{Parser, Subcommand};
 use colored::*;
 use solana_indexer::context::AppContext;
 use solana_indexer::core::account_watcher::AccountWatcher;
+use solana_indexer::core::channels;
 use solana_indexer::core::slot_tracker::SlotTracker;
 use solana_indexer::data_sources::yellowstone_grpc::YellowstoneGrpc;
 use solana_indexer::utils::cli_animations::Cli;
 use solana_indexer::utils::logger;
 use std::sync::Arc;
-use tokio::sync::mpsc;
 
 #[derive(Parser)]
 #[command(name = "indexer", about = "Solana blockchain indexer")]
@@ -96,8 +96,8 @@ async fn start() -> anyhow::Result<()> {
         ))
     });
     
-    let (slot_tx, mut slot_rx) = mpsc::channel(1000);
-    let (tx_tx, mut tx_rx) = mpsc::channel(10000);
+    let (slot_tx, mut slot_rx) = channels::slot_channel();
+    let (tx_tx, mut tx_rx) = channels::transaction_channel();
 
     let tracker = SlotTracker::new(yellowstone, ctx.rpc.clone(), ctx.cache.clone(), slot_tx, tx_tx);
     let tracker_handle = tokio::spawn(async move {
@@ -138,8 +138,8 @@ async fn track_slots(leaders: bool, transactions: bool) -> anyhow::Result<()> {
     Cli::banner();
     let ctx = AppContext::new().await?;
 
-    let (slot_tx, mut slot_rx) = mpsc::channel(1000);
-    let (tx_tx, mut tx_rx) = mpsc::channel(10000);
+    let (slot_tx, mut slot_rx) = channels::slot_channel();
+    let (tx_tx, mut tx_rx) = channels::transaction_channel();
 
     let tracker = SlotTracker::new(None, ctx.rpc.clone(), ctx.cache.clone(), slot_tx, tx_tx);
     let handle = tokio::spawn(async move {

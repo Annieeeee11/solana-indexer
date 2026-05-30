@@ -1,3 +1,4 @@
+use crate::core::channels;
 use crate::core::types::{AccountState, Slot, SlotStatus, TransactionInfo};
 use crate::utils::errors::{IndexerError, Result};
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
@@ -25,7 +26,7 @@ impl SolanaRpc {
     }
 
     pub async fn subscribe_slots(&self) -> Result<mpsc::Receiver<Slot>> {
-        let (tx, rx) = mpsc::channel(1000);
+        let (tx, rx) = channels::slot_channel();
         let client = self.client.clone();
         let poll_interval = self.poll_interval;
 
