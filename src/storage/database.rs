@@ -3,13 +3,7 @@ use crate::utils::errors::Result;
 
 #[async_trait::async_trait]
 pub trait DatabaseStorage: Send + Sync {
-    async fn store_slot(
-        &self,
-        slot: u64,
-        timestamp: i64,
-        parent: Option<u64>,
-        status: &str,
-    ) -> Result<()>;
+    async fn store_slot(&self, slot: &Slot) -> Result<()>;
 
     async fn store_account(&self, account: AccountState) -> Result<()>;
 

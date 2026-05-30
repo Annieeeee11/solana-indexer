@@ -26,8 +26,8 @@ macro_rules! row_mappers {
                     timestamp: row.get(1),
                     parent: row.get::<Option<i64>, _>(2).map(|p| p as u64),
                     status: SlotStatus::from_str(row.get(3)),
-                    block_hash: None,
-                    block_height: None,
+                    block_hash: row.get(4),
+                    block_height: row.get::<Option<i64>, _>(5).map(|h| h as u64),
                 }
             }
 

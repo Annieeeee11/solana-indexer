@@ -27,6 +27,14 @@ impl SlotStatus {
             _ => SlotStatus::Processed,
         }
     }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SlotStatus::Processed => "Processed",
+            SlotStatus::Confirmed => "Confirmed",
+            SlotStatus::Finalized => "Finalized",
+        }
+    }
 }
 
 // Basic transaction data for storage.

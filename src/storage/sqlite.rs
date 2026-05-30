@@ -30,20 +30,16 @@ impl SqliteStorage {
 
 #[async_trait::async_trait]
 impl DatabaseStorage for SqliteStorage {
-    async fn store_slot(
-        &self,
-        slot: u64,
-        timestamp: i64,
-        parent: Option<u64>,
-        status: &str,
-    ) -> Result<()> {
+    async fn store_slot(&self, slot: &Slot) -> Result<()> {
         sqlx::query(
-            "INSERT OR REPLACE INTO slots (slot_number, timestamp, parent, status) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT OR REPLACE INTO slots (slot_number, timestamp, parent, status, block_hash, block_height) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         )
-        .bind(slot as i64)
-        .bind(timestamp)
-        .bind(parent.map(|p| p as i64))
-        .bind(status)
+        .bind(slot.slot as i64)
+        .bind(slot.timestamp)
+        .bind(slot.parent.map(|p| p as i64))
+        .bind(slot.status.as_str())
+        .bind(&slot.block_hash)
+        .bind(slot.block_height.map(|h| h as i64))
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -79,7 +75,7 @@ impl DatabaseStorage for SqliteStorage {
 
     async fn get_slot(&self, slot: u64) -> Result<Option<Slot>> {
         let row = sqlx::query(
-            "SELECT slot_number, timestamp, parent, status FROM slots WHERE slot_number = ?1",
+            "SELECT slot_number, timestamp, parent, status, block_hash, block_height FROM slots WHERE slot_number = ?1",
         )
         .bind(slot as i64)
         .fetch_optional(&self.pool)
@@ -90,7 +86,7 @@ impl DatabaseStorage for SqliteStorage {
 
     async fn get_latest_slot(&self) -> Result<Option<Slot>> {
         let row = sqlx::query(
-            "SELECT slot_number, timestamp, parent, status FROM slots ORDER BY slot_number DESC LIMIT 1",
+            "SELECT slot_number, timestamp, parent, status, block_hash, block_height FROM slots ORDER BY slot_number DESC LIMIT 1",
         )
         .fetch_optional(&self.pool)
         .await?;

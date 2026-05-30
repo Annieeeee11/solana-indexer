@@ -1,4 +1,4 @@
-use crate::core::types::{AccountState, Slot, SlotStatus, Transaction};
+use crate::core::types::{AccountState, Slot, Transaction};
 use crate::storage::cache::account_store::AccountStore;
 use crate::storage::cache::l1_hot_slots::L1HotSlots;
 use crate::storage::cache::l2_transactions::L2Transactions;
@@ -23,15 +23,7 @@ impl MultiCache {
 
     pub async fn store_slot(&self, slot: Slot) -> Result<()> {
         self.l1.insert(slot.clone()).await;
-        let status = match slot.status {
-            SlotStatus::Processed => "Processed",
-            SlotStatus::Confirmed => "Confirmed",
-            SlotStatus::Finalized => "Finalized",
-        };
-        self.accounts
-            .db()
-            .store_slot(slot.slot, slot.timestamp, slot.parent, status)
-            .await
+        self.accounts.db().store_slot(&slot).await
     }
 
     pub async fn store_transaction(&self, tx: Transaction) -> Result<()> {
