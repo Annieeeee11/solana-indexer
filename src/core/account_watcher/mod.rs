@@ -1,5 +1,5 @@
 use crate::core::types::AccountState;
-use crate::data_sources::solana_rpc::SolanaRpc;
+use crate::data_sources::AccountSource;
 use crate::storage::cache::multi_cache::MultiCache;
 use crate::utils::errors::Result;
 use std::sync::Arc;
@@ -9,15 +9,15 @@ use tokio::time::{interval, Duration};
 const POLL_INTERVAL_SECS: u64 = 5;
 
 pub struct AccountWatcher {
-    rpc: Arc<SolanaRpc>,
+    accounts_source: Arc<dyn AccountSource>,
     cache: Arc<MultiCache>,
     accounts_to_watch: Vec<String>,
 }
 
 impl AccountWatcher {
-    pub fn new(rpc: Arc<SolanaRpc>, cache: Arc<MultiCache>) -> Self {
+    pub fn new(accounts_source: Arc<dyn AccountSource>, cache: Arc<MultiCache>) -> Self {
         Self {
-            rpc,
+            accounts_source,
             cache,
             accounts_to_watch: vec![],
         }
@@ -27,22 +27,24 @@ impl AccountWatcher {
         self.accounts_to_watch.push(address);
     }
 
-    pub fn with_accounts(rpc: Arc<SolanaRpc>, cache: Arc<MultiCache>, accounts: Vec<String>) -> Self {
+    pub fn with_accounts(
+        accounts_source: Arc<dyn AccountSource>,
+        cache: Arc<MultiCache>,
+        accounts: Vec<String>,
+    ) -> Self {
         Self {
-            rpc,
+            accounts_source,
             cache,
             accounts_to_watch: accounts,
         }
     }
 
-    /// Fetches one account and seeds the L3 cache (used before `run`).
     pub async fn fetch_account(&self, address: &str) -> Result<AccountState> {
-        let account = self.rpc.get_account(address).await?;
+        let account = self.accounts_source.get_account(address).await?;
         self.cache.store_account(account.clone()).await?;
         Ok(account)
     }
 
-    /// Seeds L3 cache for all registered accounts.
     pub async fn seed_accounts(&self) -> Result<()> {
         for address in &self.accounts_to_watch {
             if let Err(e) = self.fetch_account(address).await {
@@ -52,7 +54,6 @@ impl AccountWatcher {
         Ok(())
     }
 
-    /// Polls accounts until Ctrl+C (standalone commands).
     pub async fn run<F>(&self, on_change: F) -> Result<()>
     where
         F: FnMut(&str, &AccountState, &AccountState),
@@ -68,7 +69,6 @@ impl AccountWatcher {
         result
     }
 
-    /// Polls accounts until the shared shutdown broadcast fires (used by runtime).
     pub async fn run_until<F>(
         &self,
         mut on_change: F,
@@ -89,7 +89,7 @@ impl AccountWatcher {
                 }
                 _ = ticker.tick() => {
                     for address in &accounts {
-                        match self.rpc.get_account(address).await {
+                        match self.accounts_source.get_account(address).await {
                             Ok(current) => {
                                 if let Some(previous) = self.cache.get_account(address).await? {
                                     if previous.lamports != current.lamports

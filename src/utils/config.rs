@@ -9,6 +9,8 @@ pub struct Config {
     pub cache: CacheConfig,
     /// Extra comma-separated addresses to watch on `indexer start`.
     pub watch_accounts: Vec<String>,
+    /// HTTP query API port (`indexer serve`). Default 8080 when unset.
+    pub api_port: Option<u16>,
 }
 
 #[derive(Debug, Clone)]
@@ -72,6 +74,9 @@ impl Config {
                         .collect()
                 })
                 .unwrap_or_default(),
+            api_port: std::env::var("API_PORT")
+                .ok()
+                .and_then(|v| v.parse().ok()),
         })
     }
 }

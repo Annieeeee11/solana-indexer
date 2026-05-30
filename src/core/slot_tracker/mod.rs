@@ -1,5 +1,5 @@
 use crate::core::types::{Slot, TransactionInfo};
-use crate::data_sources::solana_rpc::SolanaRpc;
+use crate::data_sources::SlotSource;
 use crate::data_sources::yellowstone_grpc::YellowstoneGrpc;
 use crate::storage::cache::multi_cache::MultiCache;
 use crate::utils::errors::{IndexerError, Result};
@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 
 pub struct SlotTracker {
     yellowstone: Option<Arc<YellowstoneGrpc>>,
-    rpc: Arc<SolanaRpc>,
+    rpc: Arc<dyn SlotSource>,
     cache: Arc<MultiCache>,
     slot_tx: mpsc::Sender<Slot>,
     tx_tx: mpsc::Sender<TransactionInfo>,
@@ -17,7 +17,7 @@ pub struct SlotTracker {
 impl SlotTracker {
     pub fn new(
         yellowstone: Option<Arc<YellowstoneGrpc>>,
-        rpc: Arc<SolanaRpc>,
+        rpc: Arc<dyn SlotSource>,
         cache: Arc<MultiCache>,
         slot_tx: mpsc::Sender<Slot>,
         tx_tx: mpsc::Sender<TransactionInfo>,
@@ -36,7 +36,7 @@ impl SlotTracker {
             match yellowstone.subscribe_with_transactions().await {
                 Ok((slot_stream, tx_stream)) => {
                     tracing::info!("Using Yellowstone gRPC (real-time streaming)");
-                    
+
                     match self.stream_from_yellowstone(slot_stream, tx_stream).await {
                         Ok(_) => return Ok(()),
                         Err(e) => {
@@ -68,14 +68,14 @@ impl SlotTracker {
                             "Yellowstone slot stream closed".into(),
                         ));
                     };
-                    
+
                     tracing::debug!("Received slot from Yellowstone: {}", slot.slot);
-                    
+
                     if self.slot_tx.send(slot.clone()).await.is_err() {
                         tracing::error!("Failed to send slot to pipeline");
                         continue;
                     }
-                    
+
                     if let Err(e) = self.cache.store_slot(slot).await {
                         tracing::error!("Failed to cache slot: {}", e);
                     }
@@ -86,14 +86,14 @@ impl SlotTracker {
                             "Yellowstone tx stream closed".into(),
                         ));
                     };
-                    
+
                     tracing::debug!("Received tx from Yellowstone: {}", tx.signature);
-                    
+
                     if self.tx_tx.send(tx.clone()).await.is_err() {
                         tracing::error!("Failed to send tx to pipeline");
                         continue;
                     }
-                    
+
                     if let Err(e) = self.cache.store_transaction(tx.into()).await {
                         tracing::error!("Failed to cache transaction: {}", e);
                     }
@@ -108,7 +108,6 @@ impl SlotTracker {
         while let Some(slot) = slot_stream.recv().await {
             tracing::debug!("Received slot from RPC: {}", slot.slot);
 
-            // Fetch transactions for this block
             if let Ok(transactions) = self.rpc.get_block_with_transactions(slot.slot).await {
                 for tx in transactions {
                     if self.tx_tx.send(tx.clone()).await.is_err() {

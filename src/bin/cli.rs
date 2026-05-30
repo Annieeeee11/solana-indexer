@@ -26,6 +26,11 @@ enum Cmd {
         #[command(subcommand)]
         what: Query,
     },
+    /// Start HTTP query API (indexer layer)
+    Serve {
+        #[arg(short, long)]
+        port: Option<u16>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -99,5 +104,6 @@ async fn main() -> Result<()> {
             Query::Tx { signature } => commands::query_tx(signature).await,
             Query::Account { address } => commands::query_account(address).await,
         },
+        Cmd::Serve { port } => commands::serve(port).await,
     }
 }

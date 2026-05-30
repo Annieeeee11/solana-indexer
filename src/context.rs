@@ -1,4 +1,5 @@
 use crate::data_sources::solana_rpc::SolanaRpc;
+use crate::data_sources::{AccountSource, SlotSource};
 use crate::storage::cache::multi_cache::MultiCache;
 use crate::storage::factory::create_storage;
 use crate::utils::config::Config;
@@ -9,7 +10,7 @@ use std::sync::Arc;
 pub struct AppContext {
     pub config: Config,
     pub cache: Arc<MultiCache>,
-    pub rpc: Arc<SolanaRpc>,
+    pub(crate) rpc: Arc<SolanaRpc>,
 }
 
 impl AppContext {
@@ -25,5 +26,13 @@ impl AppContext {
         let rpc = Arc::new(SolanaRpc::new(&config.rpc.solana_rpc_url));
 
         Ok(Self { config, cache, rpc })
+    }
+
+    pub fn account_source(&self) -> Arc<dyn AccountSource> {
+        Arc::clone(&self.rpc) as Arc<dyn AccountSource>
+    }
+
+    pub fn slot_source(&self) -> Arc<dyn SlotSource> {
+        Arc::clone(&self.rpc) as Arc<dyn SlotSource>
     }
 }

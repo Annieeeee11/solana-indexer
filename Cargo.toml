@@ -4,13 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+axum = "0.7"
 clap = { version = "4.5.46", features = ["derive", "color", "env"] }
 solana-sdk = "3.0.0"
 solana-rpc-client = "3.0.0"
 solana-transaction-status = "3.0.0"
 solana-rpc-client-api = "3.0.0"
 
-tokio = { version = "1.47.1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+tokio = { version = "1.47.1", features = ["rt-multi-thread", "sync", "time", "macros", "signal", "net"] }
 
 yellowstone-grpc-client = "9.0.0"
 yellowstone-grpc-proto = "9.0.0"
@@ -30,6 +31,9 @@ moka = { version = "0.12.10", features = ["future"] }
 async-trait = "0.1"
 chrono = { version = "0.4.31", features = ["serde"] }
 thiserror = "1.0"
+
+[dev-dependencies]
+tempfile = "3.14"
 
 [[bin]]
 name = "indexer"

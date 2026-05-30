@@ -143,3 +143,31 @@ impl DatabaseStorage for SqliteStorage {
         Ok(rows.iter().map(|r| r.get(0)).collect())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::types::{Slot, SlotStatus};
+
+    #[tokio::test]
+    async fn sqlite_persists_and_reads_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = SqliteStorage::new(dir.path().join("test.db"))
+            .await
+            .expect("sqlite should init");
+
+        let slot = Slot {
+            slot: 99,
+            parent: Some(98),
+            status: SlotStatus::Confirmed,
+            timestamp: 1_700_000_000,
+            block_hash: Some("abc".into()),
+            block_height: Some(100),
+        };
+
+        storage.store_slot(&slot).await.unwrap();
+        let loaded = storage.get_slot(99).await.unwrap().expect("slot stored");
+        assert_eq!(loaded.slot, 99);
+        assert_eq!(loaded.block_hash.as_deref(), Some("abc"));
+    }
+}

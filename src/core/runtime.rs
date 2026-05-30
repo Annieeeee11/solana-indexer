@@ -23,7 +23,6 @@ impl Default for IndexerOptions {
     }
 }
 
-/// Collects active DB wallets plus `WATCH_ACCOUNTS` env addresses (deduped).
 pub async fn collect_watch_accounts(ctx: &AppContext) -> Result<Vec<String>> {
     let mut addresses = ctx.cache.get_active_wallets().await?;
     for addr in &ctx.config.watch_accounts {
@@ -34,7 +33,6 @@ pub async fn collect_watch_accounts(ctx: &AppContext) -> Result<Vec<String>> {
     Ok(addresses)
 }
 
-/// Runs slot pipeline and account watcher in parallel with a single Ctrl+C shutdown.
 pub async fn run(
     ctx: AppContext,
     yellowstone: Option<Arc<YellowstoneGrpc>>,
@@ -54,81 +52,105 @@ pub async fn run(
         shutdown_tx.clone(),
     );
 
-    let mut watcher_handle: Option<JoinHandle<()>> = if options.watch_accounts {
-        let accounts = collect_watch_accounts(&ctx).await?;
-        if accounts.is_empty() {
-            tracing::info!("No wallets or WATCH_ACCOUNTS configured; account watcher idle");
-            None
-        } else {
-            tracing::info!("Watching {} account(s) in parallel", accounts.len());
-            let watcher =
-                AccountWatcher::with_accounts(ctx.rpc.clone(), ctx.cache.clone(), accounts);
-            watcher.seed_accounts().await?;
+    let mut watcher_handle = spawn_account_watcher(
+        &ctx,
+        options.watch_accounts,
+        &shutdown_tx,
+        on_account_change,
+    )
+    .await?;
 
-            let shutdown_rx = shutdown_tx.subscribe();
-            let callback = on_account_change;
-            Some(tokio::spawn(async move {
-                if let Err(e) = watcher
-                    .run_until(
-                        move |addr, prev, curr| {
-                            callback(addr, prev, curr);
-                        },
-                        shutdown_rx,
-                    )
-                    .await
-                {
-                    tracing::error!("Account watcher error: {}", e);
-                }
-            }))
+    wait_for_shutdown(
+        shutdown_tx,
+        &mut tracker_handle,
+        &mut display_handle,
+        &mut watcher_handle,
+    )
+    .await;
+
+    abort_handles(tracker_handle, display_handle, watcher_handle).await;
+
+    Ok(())
+}
+
+async fn spawn_account_watcher(
+    ctx: &AppContext,
+    watch_accounts: bool,
+    shutdown_tx: &broadcast::Sender<()>,
+    on_account_change: Arc<dyn Fn(&str, &AccountState, &AccountState) + Send + Sync>,
+) -> Result<Option<JoinHandle<()>>> {
+    if !watch_accounts {
+        return Ok(None);
+    }
+
+    let accounts = collect_watch_accounts(ctx).await?;
+    if accounts.is_empty() {
+        tracing::info!("No wallets or WATCH_ACCOUNTS configured; account watcher idle");
+        return Ok(None);
+    }
+
+    tracing::info!("Watching {} account(s) in parallel", accounts.len());
+    let watcher = AccountWatcher::with_accounts(
+        ctx.account_source(),
+        ctx.cache.clone(),
+        accounts,
+    );
+    watcher.seed_accounts().await?;
+
+    let shutdown_rx = shutdown_tx.subscribe();
+    let callback = on_account_change;
+    Ok(Some(tokio::spawn(async move {
+        if let Err(e) = watcher
+            .run_until(
+                move |addr, prev, curr| callback(addr, prev, curr),
+                shutdown_rx,
+            )
+            .await
+        {
+            tracing::error!("Account watcher error: {}", e);
         }
-    } else {
-        None
-    };
+    })))
+}
 
+async fn wait_for_shutdown(
+    shutdown_tx: broadcast::Sender<()>,
+    tracker_handle: &mut JoinHandle<()>,
+    display_handle: &mut JoinHandle<()>,
+    watcher_handle: &mut Option<JoinHandle<()>>,
+) {
     let shutdown = async {
         let _ = tokio::signal::ctrl_c().await;
         tracing::info!("Shutdown signal received, stopping indexer...");
         let _ = shutdown_tx.send(());
     };
 
-    match &mut watcher_handle {
-        Some(wh) => {
-            tokio::select! {
-                () = shutdown => {}
-                result = &mut tracker_handle => {
-                    if let Err(e) = result {
-                        tracing::error!("Slot tracker task failed: {}", e);
-                    }
-                }
-                result = &mut display_handle => {
-                    if let Err(e) = result {
-                        tracing::error!("Display task failed: {}", e);
-                    }
-                }
-                result = wh => {
-                    if let Err(e) = result {
-                        tracing::error!("Account watcher task failed: {}", e);
-                    }
-                }
-            }
+    if let Some(wh) = watcher_handle.as_mut() {
+        tokio::select! {
+            () = shutdown => {}
+            result = tracker_handle => log_join_error("Slot tracker", result),
+            result = display_handle => log_join_error("Display", result),
+            result = wh => log_join_error("Account watcher", result),
         }
-        None => {
-            tokio::select! {
-                () = shutdown => {}
-                result = &mut tracker_handle => {
-                    if let Err(e) = result {
-                        tracing::error!("Slot tracker task failed: {}", e);
-                    }
-                }
-                result = &mut display_handle => {
-                    if let Err(e) = result {
-                        tracing::error!("Display task failed: {}", e);
-                    }
-                }
-            }
+    } else {
+        tokio::select! {
+            () = shutdown => {}
+            result = tracker_handle => log_join_error("Slot tracker", result),
+            result = display_handle => log_join_error("Display", result),
         }
     }
+}
 
+fn log_join_error(label: &str, result: std::result::Result<(), tokio::task::JoinError>) {
+    if let Err(e) = result {
+        tracing::error!("{label} task failed: {e}");
+    }
+}
+
+async fn abort_handles(
+    mut tracker_handle: JoinHandle<()>,
+    mut display_handle: JoinHandle<()>,
+    watcher_handle: Option<JoinHandle<()>>,
+) {
     tracker_handle.abort();
     display_handle.abort();
     if let Some(h) = watcher_handle {
@@ -137,91 +159,18 @@ pub async fn run(
     }
     let _ = tracker_handle.await;
     let _ = display_handle.await;
-
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::types::Slot;
     use crate::storage::cache::multi_cache::MultiCache;
-    use crate::storage::database::DatabaseStorage;
+    use crate::testing::mock_db::MockDatabase;
     use crate::utils::config::{CacheConfig, Config, RpcConfig, StorageConfig};
-    use async_trait::async_trait;
     use std::path::PathBuf;
-    use std::sync::{Arc, Mutex};
-
-    struct MockDb {
-        wallets: Mutex<Vec<String>>,
-    }
-
-    impl MockDb {
-        fn new(wallets: Vec<String>) -> Self {
-            Self {
-                wallets: Mutex::new(wallets),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl DatabaseStorage for MockDb {
-        async fn store_slot(&self, _slot: &Slot) -> Result<()> {
-            Ok(())
-        }
-
-        async fn store_account(&self, _account: AccountState) -> Result<()> {
-            Ok(())
-        }
-
-        async fn get_account(&self, _address: &str) -> Result<Option<AccountState>> {
-            Ok(None)
-        }
-
-        async fn get_slot(&self, _slot: u64) -> Result<Option<Slot>> {
-            Ok(None)
-        }
-
-        async fn store_transaction(
-            &self,
-            _tx: crate::core::types::Transaction,
-        ) -> Result<()> {
-            Ok(())
-        }
-
-        async fn get_transaction(
-            &self,
-            _signature: &str,
-        ) -> Result<Option<crate::core::types::Transaction>> {
-            Ok(None)
-        }
-
-        async fn get_latest_slot(&self) -> Result<Option<Slot>> {
-            Ok(None)
-        }
-
-        async fn add_wallet(&self, _address: String, _name: Option<String>) -> Result<()> {
-            Ok(())
-        }
-
-        async fn remove_wallet(&self, _address: &str) -> Result<()> {
-            Ok(())
-        }
-
-        async fn list_wallets(
-            &self,
-            _active_only: bool,
-        ) -> Result<Vec<(String, Option<String>, i64)>> {
-            Ok(vec![])
-        }
-
-        async fn get_active_wallets(&self) -> Result<Vec<String>> {
-            Ok(self.wallets.lock().unwrap().clone())
-        }
-    }
 
     fn test_context(wallets: Vec<String>, watch_accounts: Vec<String>) -> AppContext {
-        let db = Arc::new(MockDb::new(wallets));
+        let db = Arc::new(MockDatabase::with_wallets(wallets));
         AppContext {
             config: Config {
                 rpc: RpcConfig {
@@ -239,6 +188,7 @@ mod tests {
                     l3_size: 10,
                 },
                 watch_accounts,
+                api_port: None,
             },
             cache: Arc::new(MultiCache::new(10, 10, 10, db)),
             rpc: Arc::new(crate::data_sources::solana_rpc::SolanaRpc::new("http://localhost")),

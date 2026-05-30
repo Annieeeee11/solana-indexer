@@ -1,6 +1,6 @@
 use crate::core::channels;
 use crate::core::types::{AccountState, Slot, SlotStatus, TransactionInfo};
-use crate::data_sources::AccountSource;
+use crate::data_sources::{AccountSource, SlotSource};
 use crate::utils::errors::{IndexerError, Result};
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use solana_rpc_client_api::config::RpcBlockConfig;
@@ -185,5 +185,20 @@ impl SolanaRpc {
 impl AccountSource for SolanaRpc {
     async fn get_account(&self, address: &str) -> Result<AccountState> {
         self.fetch_account_state(address).await
+    }
+}
+
+#[async_trait::async_trait]
+impl SlotSource for SolanaRpc {
+    async fn subscribe_slots(&self) -> Result<mpsc::Receiver<Slot>> {
+        SolanaRpc::subscribe_slots(self).await
+    }
+
+    async fn get_block_with_transactions(&self, slot: u64) -> Result<Vec<TransactionInfo>> {
+        SolanaRpc::get_block_with_transactions(self, slot).await
+    }
+
+    async fn get_slot_leader(&self) -> Result<String> {
+        SolanaRpc::get_slot_leader(self).await
     }
 }

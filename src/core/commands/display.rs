@@ -1,5 +1,7 @@
+use crate::core::account_watcher::AccountWatcher;
 use crate::core::types::{AccountState, Slot, TransactionInfo};
 use crate::utils::cli_animations::Cli;
+use crate::utils::errors::Result;
 use std::sync::Arc;
 
 pub fn slot_and_tx_handlers() -> (
@@ -27,4 +29,11 @@ pub fn account_change_handler() -> Arc<dyn Fn(&str, &AccountState, &AccountState
     Arc::new(|addr, prev, curr| {
         Cli::account_change(addr, prev.lamports, curr.lamports, curr.slot);
     })
+}
+
+pub async fn run_watcher_with_cli(watcher: &AccountWatcher) -> Result<()> {
+    let on_change = account_change_handler();
+    watcher
+        .run(move |addr, prev, curr| on_change(addr, prev, curr))
+        .await
 }

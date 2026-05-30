@@ -48,7 +48,7 @@ pub fn spawn(
 
     let tracker = SlotTracker::new(
         yellowstone,
-        ctx.rpc.clone(),
+        ctx.slot_source(),
         ctx.cache.clone(),
         slot_tx,
         tx_tx,
@@ -60,7 +60,7 @@ pub fn spawn(
         }
     });
 
-    let rpc = ctx.rpc;
+    let rpc = ctx.slot_source();
     let show_leaders = options.show_leaders;
     let show_transactions = options.show_transactions;
     let mut shutdown_rx = shutdown.subscribe();
