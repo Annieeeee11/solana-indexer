@@ -8,29 +8,14 @@ pub enum IndexerError {
     #[error("Database error: {0}")]
     DatabaseError(String),
 
-    #[error("Network error: {0}")]
-    NetworkError(#[from] reqwest::Error),
+    #[error("Configuration error: {0}")]
+    ConfigError(String),
 
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
 
-    #[error("gRPC error: {0}")]
-    GrpcError(#[from] tonic::Status),
-
     #[error("Channel error: {0}")]
     ChannelError(String),
-
-    #[error("Configuration error: {0}")]
-    ConfigError(String),
-
-    #[error("Cache error: {0}")]
-    CacheError(String),
-
-    #[error("Storage error: {0}")]
-    StorageError(String),
-
-    #[error("IO error: {0}")]
-    IoError(#[from] std::io::Error),
 }
 
 impl From<sqlx::Error> for IndexerError {

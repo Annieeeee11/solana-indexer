@@ -1,10 +1,14 @@
+use crate::core::channels;
 use crate::core::types::{AccountState, Slot, SlotStatus, TransactionInfo};
+use crate::data_sources::{AccountSource, SlotSource};
 use crate::utils::errors::{IndexerError, Result};
+use crate::utils::metrics::IndexerMetrics;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use solana_rpc_client_api::config::RpcBlockConfig;
 use solana_sdk::pubkey::Pubkey;
 use solana_transaction_status::{EncodedTransaction, TransactionDetails, UiInstruction, UiMessage, UiTransactionEncoding};
-use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::Duration;
 
@@ -14,18 +18,30 @@ const DEFAULT_POLL_INTERVAL_MS: u64 = 400;
 pub struct SolanaRpc {
     client: Arc<RpcClient>,
     poll_interval: Duration,
+    metrics: Arc<IndexerMetrics>,
 }
 
 impl SolanaRpc {
-    pub fn new(url: &str) -> Self {
-        Self { 
+    pub fn new(url: &str, metrics: Arc<IndexerMetrics>) -> Self {
+        Self {
             client: Arc::new(RpcClient::new(url.to_string())),
             poll_interval: Duration::from_millis(DEFAULT_POLL_INTERVAL_MS),
+            metrics,
         }
     }
 
+    pub async fn current_slot(&self) -> Result<u64> {
+        self.client
+            .get_slot()
+            .await
+            .map_err(|e| {
+                self.metrics.rpc_errors.fetch_add(1, Ordering::Relaxed);
+                IndexerError::RpcError(e.to_string())
+            })
+    }
+
     pub async fn subscribe_slots(&self) -> Result<mpsc::Receiver<Slot>> {
-        let (tx, rx) = mpsc::channel(1000);
+        let (tx, rx) = channels::slot_channel();
         let client = self.client.clone();
         let poll_interval = self.poll_interval;
 
@@ -58,14 +74,20 @@ impl SolanaRpc {
         Ok(rx)
     }
 
-    pub async fn get_account(&self, address: &str) -> Result<AccountState> {
+    async fn fetch_account_state(&self, address: &str) -> Result<AccountState> {
         let pubkey: Pubkey = address.parse()
             .map_err(|e| IndexerError::RpcError(format!("Invalid address: {}", e)))?;
 
         let account = self.client.get_account(&pubkey).await
             .map_err(|e| IndexerError::RpcError(format!("RPC error: {}", e)))?;
 
-        let slot = self.client.get_slot().await.unwrap_or(0);
+        let slot = match self.client.get_slot().await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("Could not fetch current slot for account {}: {}", address, e);
+                0
+            }
+        };
 
         Ok(AccountState {
             address: address.to_string(),
@@ -136,13 +158,18 @@ impl SolanaRpc {
                 }
             };
 
+            let instruction_count = match &ui_tx.message {
+                UiMessage::Parsed(p) => p.instructions.len(),
+                UiMessage::Raw(r) => r.instructions.len(),
+            };
+
             txs.push(TransactionInfo {
                 signature: sig.clone(),
                 slot,
                 success: meta.err.is_none(),
                 fee: meta.fee,
                 program,
-                instructions: meta.log_messages.as_ref().map(|l| l.len()).unwrap_or(0),
+                instructions: instruction_count,
                 compute_units: meta.compute_units_consumed.clone().unwrap_or(0),
                 accounts,
                 timestamp: chrono::Utc::now().timestamp(),
@@ -152,14 +179,94 @@ impl SolanaRpc {
         Ok(txs)
     }
 
-    pub async fn get_slot_leader(&self) -> Result<String> {
-        let slot = self.client.get_slot().await
-            .map_err(|e| IndexerError::RpcError(e.to_string()))?;
-
-        self.client.get_slot_leaders(slot, 1).await
-            .map_err(|e| IndexerError::RpcError(e.to_string()))?
+    pub async fn get_leader_at_slot(&self, slot: u64) -> Result<String> {
+        self.client
+            .get_slot_leaders(slot, 1)
+            .await
+            .map_err(|e| {
+                self.metrics.rpc_errors.fetch_add(1, Ordering::Relaxed);
+                IndexerError::RpcError(e.to_string())
+            })?
             .first()
             .map(|l| l.to_string())
             .ok_or_else(|| IndexerError::RpcError("No leader".into()))
+    }
+
+    pub async fn enrich_slot_block_metadata(&self, slot: &mut Slot) -> Result<()> {
+        if slot.block_hash.is_some() && slot.block_height.is_some() {
+            return Ok(());
+        }
+
+        const RETRY_DELAY: Duration = Duration::from_millis(500);
+
+        for attempt in 0..2 {
+            if attempt > 0 {
+                tokio::time::sleep(RETRY_DELAY).await;
+            }
+
+            match self.client.get_block(slot.slot).await {
+                Ok(block) => {
+                    slot.block_hash = Some(block.blockhash.to_string());
+                    slot.block_height = block.block_height;
+                    return Ok(());
+                }
+                Err(e) => {
+                    self.metrics.rpc_errors.fetch_add(1, Ordering::Relaxed);
+                    let err_str = e.to_string();
+                    if err_str.contains("skipped") || err_str.contains("not available") {
+                        tracing::debug!(
+                            "Block {} not available for metadata enrichment (attempt {})",
+                            slot.slot,
+                            attempt + 1
+                        );
+                    } else if attempt == 1 {
+                        tracing::warn!(
+                            "Failed to enrich slot {} metadata after retry: {}",
+                            slot.slot,
+                            e
+                        );
+                    } else {
+                        tracing::debug!(
+                            "Failed to enrich slot {} metadata (attempt {}): {}",
+                            slot.slot,
+                            attempt + 1,
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl AccountSource for SolanaRpc {
+    async fn get_account(&self, address: &str) -> Result<AccountState> {
+        self.fetch_account_state(address).await
+    }
+}
+
+#[async_trait::async_trait]
+impl SlotSource for SolanaRpc {
+    async fn subscribe_slots(&self) -> Result<mpsc::Receiver<Slot>> {
+        SolanaRpc::subscribe_slots(self).await
+    }
+
+    async fn get_block_with_transactions(&self, slot: u64) -> Result<Vec<TransactionInfo>> {
+        SolanaRpc::get_block_with_transactions(self, slot).await
+    }
+
+    async fn get_leader_at_slot(&self, slot: u64) -> Result<String> {
+        SolanaRpc::get_leader_at_slot(self, slot).await
+    }
+
+    async fn enrich_slot_block_metadata(&self, slot: &mut Slot) -> Result<()> {
+        SolanaRpc::enrich_slot_block_metadata(self, slot).await
+    }
+
+    async fn current_slot(&self) -> Result<u64> {
+        SolanaRpc::current_slot(self).await
     }
 }

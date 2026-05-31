@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,17 +21,29 @@ pub enum SlotStatus {
     Finalized,
 }
 
-impl SlotStatus {
-    pub fn from_str(s: &str) -> Self {
-        match s {
+impl FromStr for SlotStatus {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        Ok(match s {
             "Finalized" => SlotStatus::Finalized,
             "Confirmed" => SlotStatus::Confirmed,
             _ => SlotStatus::Processed,
+        })
+    }
+}
+
+impl SlotStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SlotStatus::Processed => "Processed",
+            SlotStatus::Confirmed => "Confirmed",
+            SlotStatus::Finalized => "Finalized",
         }
     }
 }
 
-// Basic transaction data for storage.
+/// Persisted transaction shape (DB + L2 cache). Omits display-only fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction {
     pub signature: String,
@@ -40,7 +54,8 @@ pub struct Transaction {
     pub accounts: Vec<String>,
 }
 
-// Rich transaction info for display.
+/// Rich transaction from RPC/Yellowstone streams (program, CU, etc.) before storage.
+/// Converted to [`Transaction`] via `From` when writing to cache/DB.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionInfo {
     pub signature: String,
@@ -54,6 +69,19 @@ pub struct TransactionInfo {
     pub timestamp: i64,
 }
 
+impl From<TransactionInfo> for Transaction {
+    fn from(info: TransactionInfo) -> Self {
+        Self {
+            signature: info.signature,
+            slot: info.slot,
+            block_time: Some(info.timestamp),
+            fee: info.fee,
+            success: info.success,
+            accounts: info.accounts,
+        }
+    }
+}
+
 // Current state of a Solana account.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountState {
@@ -64,4 +92,26 @@ pub struct AccountState {
     pub executable: bool,
     pub data: Vec<u8>,
     pub rent_epoch: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn slot_status_from_str() {
+        assert!(matches!(
+            SlotStatus::from_str("Finalized").unwrap(),
+            SlotStatus::Finalized
+        ));
+        assert!(matches!(
+            SlotStatus::from_str("Confirmed").unwrap(),
+            SlotStatus::Confirmed
+        ));
+        assert!(matches!(
+            SlotStatus::from_str("unknown").unwrap(),
+            SlotStatus::Processed
+        ));
+    }
 }

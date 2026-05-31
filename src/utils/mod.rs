@@ -3,4 +3,7 @@ pub mod config;
 pub mod errors;
 pub mod icons;
 pub mod logger;
+pub mod metrics;
+pub mod redact;
+pub mod shutdown;
 pub mod theme;

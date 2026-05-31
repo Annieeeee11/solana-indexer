@@ -1,5 +1,9 @@
 pub mod cache;
 pub mod database;
 pub mod factory;
+#[cfg(feature = "postgres")]
 pub mod postgres;
+pub mod queries;
+pub mod repository;
+#[cfg(feature = "sqlite")]
 pub mod sqlite;
