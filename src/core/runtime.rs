@@ -1,4 +1,4 @@
-use crate::api;
+use crate::api::{self, ApiServeConfig};
 use crate::context::AppContext;
 use crate::core::account_watcher::AccountWatcher;
 use crate::core::slot_pipeline::{self, SlotPipelineOptions};
@@ -7,6 +7,7 @@ use crate::utils::errors::Result;
 use crate::utils::shutdown;
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
@@ -54,6 +55,8 @@ pub async fn run(
 ) -> Result<()> {
     let (shutdown_tx, _) = broadcast::channel(1);
 
+    spawn_metrics_reporter(ctx.metrics.clone(), shutdown_tx.subscribe());
+
     let (mut tracker_handle, mut display_handle) = slot_pipeline::spawn(
         ctx.clone(),
         options.pipeline,
@@ -91,7 +94,20 @@ pub async fn run(
     }
     shutdown::shutdown_handles(handles).await;
 
+    ctx.metrics.log_snapshot();
     Ok(())
+}
+
+fn spawn_metrics_reporter(metrics: Arc<crate::utils::metrics::IndexerMetrics>, mut shutdown: broadcast::Receiver<()>) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        loop {
+            tokio::select! {
+                _ = shutdown.recv() => break,
+                _ = interval.tick() => metrics.log_snapshot(),
+            }
+        }
+    });
 }
 
 fn spawn_api_server(
@@ -100,11 +116,16 @@ fn spawn_api_server(
     shutdown_tx: &broadcast::Sender<()>,
 ) -> Option<JoinHandle<()>> {
     let port = port?;
-    let cache = ctx.cache.clone();
+    let config = ApiServeConfig {
+        cache: ctx.cache.clone(),
+        port,
+        api_key: ctx.config.api_key.clone(),
+        bind_localhost: ctx.config.api_bind_localhost,
+    };
     let shutdown_rx = shutdown_tx.subscribe();
     tracing::info!("Starting HTTP query API on port {port} (parallel with indexer)");
     Some(tokio::spawn(async move {
-        if let Err(e) = api::serve_until_shutdown(cache, port, shutdown_rx).await {
+        if let Err(e) = api::serve_until_shutdown(config, shutdown_rx).await {
             tracing::error!("HTTP API error: {e}");
         }
     }))

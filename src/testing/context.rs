@@ -2,6 +2,7 @@ use crate::context::AppContext;
 use crate::storage::cache::multi_cache::MultiCache;
 use crate::testing::mock_db::MockDatabase;
 use crate::utils::config::{CacheConfig, Config, RpcConfig, StorageConfig};
+use crate::utils::metrics::IndexerMetrics;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -11,7 +12,9 @@ pub fn test_context(
     watch_accounts: Vec<String>,
     api_port: Option<u16>,
 ) -> AppContext {
+    let metrics = IndexerMetrics::new();
     let db = Arc::new(MockDatabase::with_wallets(wallets));
+    let cache = Arc::new(MultiCache::new(10, 10, 10, db, metrics.clone()));
     AppContext::from_parts(
         Config {
             rpc: RpcConfig {
@@ -30,8 +33,12 @@ pub fn test_context(
             },
             watch_accounts,
             api_port,
+            api_key: None,
+            api_bind_localhost: false,
+            slot_enrich_min_interval_ms: 0,
         },
-        Arc::new(MultiCache::new(10, 10, 10, db)),
+        cache,
         "http://localhost",
+        metrics,
     )
 }

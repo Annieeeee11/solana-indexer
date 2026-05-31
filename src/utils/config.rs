@@ -11,6 +11,12 @@ pub struct Config {
     pub watch_accounts: Vec<String>,
     /// HTTP query API port (`indexer serve`). Default 8080 when unset.
     pub api_port: Option<u16>,
+    /// Optional bearer/API-key auth for the HTTP query API (`API_KEY`).
+    pub api_key: Option<String>,
+    /// When true, HTTP API binds `127.0.0.1` only (`API_BIND_LOCALHOST=1`).
+    pub api_bind_localhost: bool,
+    /// Min milliseconds between Yellowstone slot `get_block` enrichment RPC calls.
+    pub slot_enrich_min_interval_ms: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -77,6 +83,14 @@ impl Config {
             api_port: std::env::var("API_PORT")
                 .ok()
                 .and_then(|v| v.parse().ok()),
+            api_key: std::env::var("API_KEY").ok().filter(|s| !s.is_empty()),
+            api_bind_localhost: std::env::var("API_BIND_LOCALHOST")
+                .ok()
+                .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true")),
+            slot_enrich_min_interval_ms: std::env::var("SLOT_ENRICH_MIN_INTERVAL_MS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(2000),
         })
     }
 
@@ -84,8 +98,7 @@ impl Config {
     pub fn warn_if_misconfigured(&self) {
         if let Some(url) = &self.rpc.yellowstone_grpc_url {
             let lower = url.to_lowercase();
-            if lower.starts_with("https://")
-                || lower.contains("mainnet-beta.solana.com")
+            if lower.contains("mainnet-beta.solana.com")
                 || lower.contains("/v1/")
             {
                 tracing::warn!(
@@ -93,6 +106,12 @@ impl Config {
                      use a Geyser gRPC endpoint (host:port), not SOLANA_RPC_URL"
                 );
             }
+        }
+
+        if self.api_port.is_some() && self.api_key.is_none() {
+            tracing::warn!(
+                "API_PORT is set but API_KEY is not — HTTP API accepts unauthenticated requests"
+            );
         }
     }
 }

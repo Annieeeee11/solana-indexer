@@ -3,10 +3,29 @@ use crate::core::types::{Slot, SlotStatus, TransactionInfo};
 use crate::utils::errors::{IndexerError, Result};
 use futures::{SinkExt, StreamExt};
 use std::collections::HashMap;
+use std::sync::Once;
+use std::time::Duration;
 use tokio::sync::mpsc;
-use yellowstone_grpc_client::GeyserGrpcBuilder;
+use yellowstone_grpc_client::{ClientTlsConfig, GeyserGrpcBuilder};
 use yellowstone_grpc_proto::prelude::*;
 use yellowstone_grpc_proto::prelude::subscribe_update::UpdateOneof;
+
+static RUSTLS_PROVIDER: Once = Once::new();
+
+fn ensure_rustls_provider() {
+    RUSTLS_PROVIDER.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
+
+fn normalize_grpc_url(url: &str) -> String {
+    let url = url.trim();
+    if url.starts_with("http://") || url.starts_with("https://") {
+        url.to_string()
+    } else {
+        format!("https://{url}")
+    }
+}
 
 pub struct YellowstoneGrpc {
     url: String,
@@ -31,10 +50,9 @@ impl YellowstoneGrpc {
     }
 
     fn tx_filter() -> HashMap<String, SubscribeRequestFilterTransactions> {
-        let mut m = HashMap::new();
-        m.insert("transactions".into(), SubscribeRequestFilterTransactions::default());
-        m
-    }
+        // Empty: providers like RPCFast reject unfiltered mainnet tx subscriptions.
+        HashMap::new()
+     }
 
     fn parse_slot(s: &SubscribeUpdateSlot) -> Slot {
         Slot {
@@ -82,13 +100,25 @@ impl YellowstoneGrpc {
         let (slot_tx, slot_rx) = channels::slot_channel();
         let (tx_tx, tx_rx) = channels::transaction_channel();
 
-        let mut builder = GeyserGrpcBuilder::from_shared(self.url.clone())
+        let url = normalize_grpc_url(&self.url);
+        let mut builder = GeyserGrpcBuilder::from_shared(url.clone())
             .map_err(|e| IndexerError::ConfigError(e.to_string()))?;
 
         if let Some(t) = &self.token {
             builder = builder.x_token(Some(t.clone()))
                 .map_err(|e| IndexerError::ConfigError(e.to_string()))?;
         }
+
+        if url.starts_with("https://") {
+            ensure_rustls_provider();
+            builder = builder
+                .tls_config(ClientTlsConfig::new().with_native_roots())
+                .map_err(|e| IndexerError::ConfigError(e.to_string()))?;
+        }
+
+        builder = builder
+            .connect_timeout(Duration::from_secs(15))
+            .http2_keep_alive_interval(Duration::from_secs(30));
 
         let mut client = builder.connect().await
             .map_err(|e| IndexerError::ConfigError(e.to_string()))?;

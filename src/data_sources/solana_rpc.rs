@@ -2,11 +2,13 @@ use crate::core::channels;
 use crate::core::types::{AccountState, Slot, SlotStatus, TransactionInfo};
 use crate::data_sources::{AccountSource, SlotSource};
 use crate::utils::errors::{IndexerError, Result};
+use crate::utils::metrics::IndexerMetrics;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use solana_rpc_client_api::config::RpcBlockConfig;
 use solana_sdk::pubkey::Pubkey;
 use solana_transaction_status::{EncodedTransaction, TransactionDetails, UiInstruction, UiMessage, UiTransactionEncoding};
-use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::Duration;
 
@@ -16,14 +18,26 @@ const DEFAULT_POLL_INTERVAL_MS: u64 = 400;
 pub struct SolanaRpc {
     client: Arc<RpcClient>,
     poll_interval: Duration,
+    metrics: Arc<IndexerMetrics>,
 }
 
 impl SolanaRpc {
-    pub fn new(url: &str) -> Self {
-        Self { 
+    pub fn new(url: &str, metrics: Arc<IndexerMetrics>) -> Self {
+        Self {
             client: Arc::new(RpcClient::new(url.to_string())),
             poll_interval: Duration::from_millis(DEFAULT_POLL_INTERVAL_MS),
+            metrics,
         }
+    }
+
+    pub async fn current_slot(&self) -> Result<u64> {
+        self.client
+            .get_slot()
+            .await
+            .map_err(|e| {
+                self.metrics.rpc_errors.fetch_add(1, Ordering::Relaxed);
+                IndexerError::RpcError(e.to_string())
+            })
     }
 
     pub async fn subscribe_slots(&self) -> Result<mpsc::Receiver<Slot>> {
@@ -169,19 +183,13 @@ impl SolanaRpc {
         self.client
             .get_slot_leaders(slot, 1)
             .await
-            .map_err(|e| IndexerError::RpcError(e.to_string()))?
+            .map_err(|e| {
+                self.metrics.rpc_errors.fetch_add(1, Ordering::Relaxed);
+                IndexerError::RpcError(e.to_string())
+            })?
             .first()
             .map(|l| l.to_string())
             .ok_or_else(|| IndexerError::RpcError("No leader".into()))
-    }
-
-    pub async fn get_slot_leader(&self) -> Result<String> {
-        let slot = self
-            .client
-            .get_slot()
-            .await
-            .map_err(|e| IndexerError::RpcError(e.to_string()))?;
-        self.get_leader_at_slot(slot).await
     }
 
     pub async fn enrich_slot_block_metadata(&self, slot: &mut Slot) -> Result<()> {
@@ -195,6 +203,7 @@ impl SolanaRpc {
                 slot.block_height = block.block_height;
             }
             Err(e) => {
+                self.metrics.rpc_errors.fetch_add(1, Ordering::Relaxed);
                 let err_str = e.to_string();
                 if err_str.contains("skipped") || err_str.contains("not available") {
                     tracing::debug!("Block {} not available for metadata enrichment", slot.slot);
@@ -227,10 +236,6 @@ impl SlotSource for SolanaRpc {
 
     async fn get_leader_at_slot(&self, slot: u64) -> Result<String> {
         SolanaRpc::get_leader_at_slot(self, slot).await
-    }
-
-    async fn get_slot_leader(&self) -> Result<String> {
-        SolanaRpc::get_slot_leader(self).await
     }
 
     async fn enrich_slot_block_metadata(&self, slot: &mut Slot) -> Result<()> {

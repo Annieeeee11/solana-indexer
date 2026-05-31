@@ -29,12 +29,12 @@ fn load_dotenv() {
 async fn rpc_returns_slot_leader() {
     load_dotenv();
     let url = std::env::var("SOLANA_RPC_URL").expect("set SOLANA_RPC_URL for this test");
-    let rpc = Arc::new(SolanaRpc::new(&url)) as Arc<dyn SlotSource>;
-
+    let rpc = SolanaRpc::new(&url, solana_indexer::utils::metrics::IndexerMetrics::new());
+    let slot = rpc.current_slot().await.expect("current_slot should succeed");
     let leader = rpc
-        .get_slot_leader()
+        .get_leader_at_slot(slot)
         .await
-        .expect("get_slot_leader should succeed");
+        .expect("get_leader_at_slot should succeed");
     assert!(!leader.is_empty(), "leader pubkey should be non-empty");
 }
 
@@ -43,7 +43,10 @@ async fn rpc_returns_slot_leader() {
 async fn rpc_fetches_wrapped_sol_account() {
     load_dotenv();
     let url = std::env::var("SOLANA_RPC_URL").expect("set SOLANA_RPC_URL for this test");
-    let rpc = Arc::new(SolanaRpc::new(&url)) as Arc<dyn AccountSource>;
+    let rpc = Arc::new(SolanaRpc::new(
+        &url,
+        solana_indexer::utils::metrics::IndexerMetrics::new(),
+    )) as Arc<dyn AccountSource>;
 
     let account = rpc
         .get_account("So11111111111111111111111111111111111111112")

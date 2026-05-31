@@ -1,6 +1,7 @@
 use axum::{
-    extract::{Path, State},
-    http::StatusCode,
+    extract::{Path, Request, State},
+    http::{header, StatusCode},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
     Json, Router,
@@ -13,8 +14,17 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 
 #[derive(Clone)]
-pub struct ApiState {
+pub struct ApiServeConfig {
+    pub cache: Arc<MultiCache>,
+    pub port: u16,
+    pub api_key: Option<String>,
+    pub bind_localhost: bool,
+}
+
+#[derive(Clone)]
+struct ApiState {
     cache: Arc<MultiCache>,
+    api_key: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -27,39 +37,90 @@ struct ErrorBody {
     error: String,
 }
 
-pub fn router(cache: Arc<MultiCache>) -> Router {
-    Router::new()
+pub fn router(cache: Arc<MultiCache>, api_key: Option<String>) -> Router {
+    let state = ApiState { cache, api_key };
+    let mut app = Router::new()
         .route("/health", get(health))
         .route("/slots/latest", get(latest_slot))
         .route("/slots/:number", get(slot_by_number))
         .route("/transactions/:signature", get(transaction_by_sig))
-        .route("/accounts/:address", get(account_by_address))
-        .with_state(ApiState { cache })
+        .route("/accounts/:address", get(account_by_address));
+
+    if state.api_key.is_some() {
+        app = app.route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_api_key,
+        ));
+    }
+
+    app.with_state(state)
 }
 
-/// Standalone HTTP server (Ctrl+C stops). Binds `0.0.0.0` — use behind a firewall in production.
-pub async fn serve(cache: Arc<MultiCache>, port: u16) -> Result<()> {
+async fn require_api_key(
+    State(state): State<ApiState>,
+    request: Request,
+    next: Next,
+) -> std::result::Result<Response, StatusCode> {
+    let Some(expected) = &state.api_key else {
+        return Ok(next.run(request).await);
+    };
+
+    let authorized = request
+        .headers()
+        .get("x-api-key")
+        .and_then(|v| v.to_str().ok())
+        .map(|k| k == expected)
+        .unwrap_or(false)
+        || request
+            .headers()
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|token| token == expected)
+            .unwrap_or(false);
+
+    if authorized {
+        Ok(next.run(request).await)
+    } else {
+        Err(StatusCode::UNAUTHORIZED)
+    }
+}
+
+/// Standalone HTTP server (Ctrl+C stops).
+pub async fn serve(config: ApiServeConfig) -> Result<()> {
     let shutdown_tx = shutdown::channel();
     shutdown::spawn_on_ctrl_c(
         shutdown_tx.clone(),
         "Shutdown signal received, stopping HTTP API...",
     );
-    serve_until_shutdown(cache, port, shutdown_tx.subscribe()).await
+    serve_until_shutdown(config, shutdown_tx.subscribe()).await
 }
 
 /// HTTP server until the shared shutdown broadcast fires (used by `indexer start` + `API_PORT`).
 pub async fn serve_until_shutdown(
-    cache: Arc<MultiCache>,
-    port: u16,
+    config: ApiServeConfig,
     mut shutdown: broadcast::Receiver<()>,
 ) -> Result<()> {
-    let app = router(cache);
-    let addr = format!("0.0.0.0:{port}");
+    let ApiServeConfig {
+        cache,
+        port,
+        api_key,
+        bind_localhost,
+    } = config;
+
+    let host = if bind_localhost { "127.0.0.1" } else { "0.0.0.0" };
+    let addr = format!("{host}:{port}");
+    let app = router(cache, api_key.clone());
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .map_err(|e| IndexerError::ConfigError(format!("Failed to bind {addr}: {e}")))?;
 
-    tracing::info!("HTTP API listening on http://{addr} (dev: no auth; bind all interfaces)");
+    match &api_key {
+        Some(_) => tracing::info!("HTTP API listening on http://{addr} (API_KEY required)"),
+        None => tracing::info!(
+            "HTTP API listening on http://{addr} (no API_KEY — unauthenticated; dev only)"
+        ),
+    }
 
     axum::serve(listener, app.into_make_service())
         .with_graceful_shutdown(async move {
@@ -142,12 +203,16 @@ mod tests {
     use crate::storage::database::DatabaseStorage;
     use crate::testing::fixtures::sample_slot;
     use crate::testing::mock_db::MockDatabase;
+    use crate::utils::metrics::IndexerMetrics;
     use tower::ServiceExt;
+
+    fn test_cache(db: Arc<MockDatabase>) -> Arc<MultiCache> {
+        Arc::new(MultiCache::new(10, 10, 10, db, IndexerMetrics::new()))
+    }
 
     #[tokio::test]
     async fn health_returns_ok() {
-        let cache = Arc::new(MultiCache::new(10, 10, 10, Arc::new(MockDatabase::new())));
-        let app = router(cache);
+        let app = router(test_cache(Arc::new(MockDatabase::new())), None);
 
         let response = app
             .oneshot(
@@ -166,8 +231,7 @@ mod tests {
     async fn latest_slot_returns_json() {
         let db = Arc::new(MockDatabase::new());
         db.store_slot(&sample_slot(42)).await.unwrap();
-        let cache = Arc::new(MultiCache::new(10, 10, 10, db));
-        let app = router(cache);
+        let app = router(test_cache(db), None);
 
         let response = app
             .oneshot(
@@ -184,8 +248,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_slot_returns_404() {
-        let cache = Arc::new(MultiCache::new(10, 10, 10, Arc::new(MockDatabase::new())));
-        let app = router(cache);
+        let app = router(test_cache(Arc::new(MockDatabase::new())), None);
 
         let response = app
             .oneshot(
@@ -212,8 +275,7 @@ mod tests {
             accounts: vec![],
         };
         db.store_transaction(tx).await.unwrap();
-        let cache = Arc::new(MultiCache::new(10, 10, 10, db));
-        let app = router(cache);
+        let app = router(test_cache(db), None);
 
         let response = app
             .oneshot(
@@ -226,5 +288,37 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn api_key_required_when_configured() {
+        let app = router(
+            test_cache(Arc::new(MockDatabase::new())),
+            Some("secret".into()),
+        );
+
+        let denied = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+
+        let ok = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .header("x-api-key", "secret")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ok.status(), StatusCode::OK);
     }
 }

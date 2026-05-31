@@ -93,10 +93,6 @@ impl SlotSource for MockSlotSource {
         Ok(self.leader.clone())
     }
 
-    async fn get_slot_leader(&self) -> Result<String> {
-        Ok(self.leader.clone())
-    }
-
     async fn enrich_slot_block_metadata(&self, slot: &mut Slot) -> Result<()> {
         if slot.block_hash.is_none() {
             slot.block_hash = Some(format!("mock-hash-{}", slot.slot));

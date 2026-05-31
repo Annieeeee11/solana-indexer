@@ -5,12 +5,15 @@ use crate::storage::cache::multi_cache::MultiCache;
 use crate::storage::factory::create_storage;
 use crate::utils::config::Config;
 use crate::utils::errors::Result;
+use crate::utils::metrics::IndexerMetrics;
 use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Clone)]
 pub struct AppContext {
     pub config: Config,
     pub cache: Arc<MultiCache>,
+    pub metrics: Arc<IndexerMetrics>,
     rpc: Arc<SolanaRpc>,
     yellowstone: Option<Arc<dyn YellowstoneSource>>,
 }
@@ -20,14 +23,16 @@ impl AppContext {
         let config = Config::load()?;
         config.warn_if_misconfigured();
 
+        let metrics = IndexerMetrics::new();
         let db = create_storage(&config.storage).await?;
         let cache = Arc::new(MultiCache::new(
             config.cache.l1_size,
             config.cache.l2_size,
             config.cache.l3_size,
             db,
+            metrics.clone(),
         ));
-        let rpc = Arc::new(SolanaRpc::new(&config.rpc.solana_rpc_url));
+        let rpc = Arc::new(SolanaRpc::new(&config.rpc.solana_rpc_url, metrics.clone()));
         let yellowstone = config
             .rpc
             .yellowstone_grpc_url
@@ -43,9 +48,14 @@ impl AppContext {
         Ok(Self {
             config,
             cache,
+            metrics,
             rpc,
             yellowstone,
         })
+    }
+
+    pub fn slot_enrich_interval(&self) -> Duration {
+        Duration::from_millis(self.config.slot_enrich_min_interval_ms)
     }
 
     #[cfg(test)]
@@ -53,11 +63,13 @@ impl AppContext {
         config: Config,
         cache: Arc<MultiCache>,
         rpc_url: &str,
+        metrics: Arc<IndexerMetrics>,
     ) -> Self {
         Self {
             config,
             cache,
-            rpc: Arc::new(SolanaRpc::new(rpc_url)),
+            metrics: metrics.clone(),
+            rpc: Arc::new(SolanaRpc::new(rpc_url, metrics)),
             yellowstone: None,
         }
     }

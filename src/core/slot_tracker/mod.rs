@@ -1,14 +1,20 @@
+use crate::core::enrichment_limiter::EnrichmentLimiter;
 use crate::core::types::{Slot, TransactionInfo};
 use crate::data_sources::{SlotSource, YellowstoneSource};
 use crate::storage::cache::multi_cache::MultiCache;
 use crate::utils::errors::{IndexerError, Result};
+use crate::utils::metrics::IndexerMetrics;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 pub struct SlotTracker {
     yellowstone: Option<Arc<dyn YellowstoneSource>>,
     rpc: Arc<dyn SlotSource>,
     cache: Arc<MultiCache>,
+    metrics: Arc<IndexerMetrics>,
+    enrich_limiter: EnrichmentLimiter,
     slot_tx: mpsc::Sender<Slot>,
     tx_tx: mpsc::Sender<TransactionInfo>,
 }
@@ -18,6 +24,8 @@ impl SlotTracker {
         yellowstone: Option<Arc<dyn YellowstoneSource>>,
         rpc: Arc<dyn SlotSource>,
         cache: Arc<MultiCache>,
+        metrics: Arc<IndexerMetrics>,
+        enrich_min_interval: Duration,
         slot_tx: mpsc::Sender<Slot>,
         tx_tx: mpsc::Sender<TransactionInfo>,
     ) -> Self {
@@ -25,6 +33,8 @@ impl SlotTracker {
             yellowstone,
             rpc,
             cache,
+            metrics,
+            enrich_limiter: EnrichmentLimiter::new(enrich_min_interval),
             slot_tx,
             tx_tx,
         }
@@ -54,6 +64,23 @@ impl SlotTracker {
         self.poll_from_rpc().await
     }
 
+    async fn maybe_enrich_slot(&self, slot: &mut Slot) {
+        if !self.enrich_limiter.should_enrich(slot) {
+            if slot.block_hash.is_none() || slot.block_height.is_none() {
+                self.metrics
+                    .enrich_rate_limited
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            return;
+        }
+
+        if self.rpc.enrich_slot_block_metadata(slot).await.is_ok() {
+            if slot.block_hash.is_some() || slot.block_height.is_some() {
+                self.metrics.enrich_success.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+
     async fn stream_from_yellowstone(
         &self,
         mut slot_stream: mpsc::Receiver<Slot>,
@@ -68,16 +95,10 @@ impl SlotTracker {
                         ));
                     };
 
-                    tracing::debug!("Received slot from Yellowstone: {}", slot.slot);
+                    tracing::debug!(slot = slot.slot, source = "yellowstone", "ingest_slot");
 
                     let mut slot = slot;
-                    if let Err(e) = self.rpc.enrich_slot_block_metadata(&mut slot).await {
-                        tracing::debug!(
-                            "Slot {} metadata enrichment skipped: {}",
-                            slot.slot,
-                            e
-                        );
-                    }
+                    self.maybe_enrich_slot(&mut slot).await;
 
                     if self.slot_tx.send(slot.clone()).await.is_err() {
                         tracing::error!("Failed to send slot to pipeline");
@@ -86,6 +107,8 @@ impl SlotTracker {
 
                     if let Err(e) = self.cache.store_slot(slot).await {
                         tracing::error!("Failed to cache slot: {}", e);
+                    } else {
+                        self.metrics.maybe_log_periodic(100);
                     }
                 }
                 tx = tx_stream.recv() => {
@@ -95,7 +118,7 @@ impl SlotTracker {
                         ));
                     };
 
-                    tracing::debug!("Received tx from Yellowstone: {}", tx.signature);
+                    tracing::debug!(signature = %tx.signature, source = "yellowstone", "ingest_tx");
 
                     if self.tx_tx.send(tx.clone()).await.is_err() {
                         tracing::error!("Failed to send tx to pipeline");
@@ -114,7 +137,7 @@ impl SlotTracker {
         let mut slot_stream = self.rpc.subscribe_slots().await?;
 
         while let Some(slot) = slot_stream.recv().await {
-            tracing::debug!("Received slot from RPC: {}", slot.slot);
+            tracing::debug!(slot = slot.slot, source = "rpc", "ingest_slot");
 
             if let Ok(transactions) = self.rpc.get_block_with_transactions(slot.slot).await {
                 for tx in transactions {
@@ -136,6 +159,8 @@ impl SlotTracker {
 
             if let Err(e) = self.cache.store_slot(slot).await {
                 tracing::error!("Failed to cache slot: {}", e);
+            } else {
+                self.metrics.maybe_log_periodic(100);
             }
         }
 
@@ -151,20 +176,29 @@ mod tests {
     use crate::testing::fixtures::sample_slot;
     use crate::testing::mock_db::MockDatabase;
     use crate::testing::mock_sources::MockSlotSource;
-    use std::sync::Arc;
+    use crate::utils::metrics::IndexerMetrics;
     use tokio::time::{timeout, Duration};
 
     #[tokio::test]
     async fn rpc_poll_forwards_slot_to_channel_and_cache() {
         let slot = sample_slot(42);
+        let metrics = IndexerMetrics::new();
         let rpc: Arc<dyn SlotSource> =
             Arc::new(MockSlotSource::with_slots("mock-leader", vec![slot.clone()]));
         let db = Arc::new(MockDatabase::new());
-        let cache = Arc::new(MultiCache::new(10, 10, 10, db));
+        let cache = Arc::new(MultiCache::new(10, 10, 10, db, metrics.clone()));
         let (slot_tx, mut slot_rx) = channels::slot_channel();
         let (tx_tx, _tx_rx) = channels::transaction_channel();
 
-        let tracker = SlotTracker::new(None, rpc, cache.clone(), slot_tx, tx_tx);
+        let tracker = SlotTracker::new(
+            None,
+            rpc,
+            cache.clone(),
+            metrics,
+            Duration::from_millis(0),
+            slot_tx,
+            tx_tx,
+        );
         let tracker_task = tokio::spawn(async move {
             tracker.start().await
         });

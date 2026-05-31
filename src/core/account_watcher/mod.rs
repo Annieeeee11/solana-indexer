@@ -117,6 +117,7 @@ mod tests {
             10,
             10,
             Arc::new(crate::testing::mock_db::MockDatabase::new()),
+            crate::utils::metrics::IndexerMetrics::new(),
         ));
 
         let watcher = AccountWatcher::with_accounts(

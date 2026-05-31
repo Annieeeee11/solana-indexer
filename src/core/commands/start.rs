@@ -81,27 +81,22 @@ pub async fn track_slots(leaders: bool, transactions: bool, watch_accounts: bool
     Cli::info("Ctrl+C to stop");
 
     let (on_slot, on_tx) = slot_and_tx_handlers();
-    let pipeline = SlotPipelineOptions {
-        show_leaders: leaders,
-        show_transactions: transactions,
-    };
 
-    if watch_accounts {
-        runtime::run(
-            ctx,
-            IndexerOptions {
-                pipeline,
-                watch_accounts: true,
-                api_port: None,
+    runtime::run(
+        ctx,
+        IndexerOptions {
+            pipeline: SlotPipelineOptions {
+                show_leaders: leaders,
+                show_transactions: transactions,
             },
-            on_slot,
-            on_tx,
-            account_change_handler(),
-        )
-        .await?;
-    } else {
-        crate::core::slot_pipeline::run(ctx, pipeline, on_slot, on_tx).await?;
-    }
+            watch_accounts,
+            api_port: None,
+        },
+        on_slot,
+        on_tx,
+        account_change_handler(),
+    )
+    .await?;
 
     Ok(())
 }

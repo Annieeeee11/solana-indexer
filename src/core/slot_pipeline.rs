@@ -3,8 +3,6 @@ use crate::core::channels;
 use crate::core::leader_cache::LeaderCache;
 use crate::core::slot_tracker::SlotTracker;
 use crate::core::types::{Slot, TransactionInfo};
-use crate::utils::errors::Result;
-use crate::utils::shutdown;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
@@ -39,6 +37,8 @@ pub fn spawn(
         ctx.yellowstone_source(),
         ctx.slot_source(),
         ctx.cache.clone(),
+        ctx.metrics.clone(),
+        ctx.slot_enrich_interval(),
         slot_tx,
         tx_tx,
     );
@@ -82,28 +82,3 @@ pub fn spawn(
     (tracker_handle, display_handle)
 }
 
-/// Standalone pipeline run (track slots) with its own Ctrl+C handler.
-pub async fn run(
-    ctx: AppContext,
-    options: SlotPipelineOptions,
-    on_slot: Arc<dyn Fn(Slot, Option<String>) + Send + Sync>,
-    on_tx: Arc<dyn Fn(TransactionInfo) + Send + Sync>,
-) -> Result<()> {
-    let shutdown_tx = shutdown::channel();
-    let (mut tracker_handle, mut display_handle) =
-        spawn(ctx, options, on_slot, on_tx, shutdown_tx.clone());
-
-    shutdown::wait_ctrl_c_or_any(
-        shutdown_tx,
-        "Shutdown signal received, stopping pipeline...",
-        &mut [
-            (&mut tracker_handle, "Slot tracker"),
-            (&mut display_handle, "Display"),
-        ],
-    )
-    .await;
-
-    shutdown::shutdown_handles([tracker_handle, display_handle]).await;
-
-    Ok(())
-}
