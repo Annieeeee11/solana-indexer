@@ -12,6 +12,7 @@ pub async fn watch_account(address: String) -> Result<()> {
 
     let watcher = AccountWatcher::with_accounts(
         ctx.account_source(),
+        ctx.yellowstone_source(),
         ctx.cache,
         vec![address.clone()],
     );
@@ -38,7 +39,12 @@ pub async fn wallet_watch() -> Result<()> {
         return Ok(());
     }
 
-    let watcher = AccountWatcher::with_accounts(ctx.account_source(), ctx.cache, wallets.clone());
+    let watcher = AccountWatcher::with_accounts(
+        ctx.account_source(),
+        ctx.yellowstone_source(),
+        ctx.cache,
+        wallets.clone(),
+    );
 
     Cli::success(&format!("Watching {} wallet(s)", wallets.len()));
     Cli::info("Ctrl+C to stop");

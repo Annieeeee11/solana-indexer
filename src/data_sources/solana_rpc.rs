@@ -265,4 +265,8 @@ impl SlotSource for SolanaRpc {
     async fn enrich_slot_block_metadata(&self, slot: &mut Slot) -> Result<()> {
         SolanaRpc::enrich_slot_block_metadata(self, slot).await
     }
+
+    async fn current_slot(&self) -> Result<u64> {
+        SolanaRpc::current_slot(self).await
+    }
 }

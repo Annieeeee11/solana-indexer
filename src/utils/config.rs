@@ -17,6 +17,8 @@ pub struct Config {
     pub api_bind_localhost: bool,
     /// Min milliseconds between Yellowstone slot `get_block` enrichment RPC calls.
     pub slot_enrich_min_interval_ms: u64,
+    /// Max slots to backfill after restart when checkpoint lags behind chain head.
+    pub backfill_max_slots: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -106,6 +108,10 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(2000),
+            backfill_max_slots: std::env::var("BACKFILL_MAX_SLOTS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(100),
         })
     }
 

@@ -38,6 +38,7 @@ pub fn test_context(
             api_key: None,
             api_bind_localhost: false,
             slot_enrich_min_interval_ms: 0,
+            backfill_max_slots: 100,
         },
         cache,
         "http://localhost",

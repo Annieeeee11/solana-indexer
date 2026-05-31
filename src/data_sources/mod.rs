@@ -20,6 +20,8 @@ pub trait SlotSource: Send + Sync {
 
     /// Fill `block_hash` / `block_height` when missing (e.g. Yellowstone slot updates).
     async fn enrich_slot_block_metadata(&self, slot: &mut Slot) -> Result<()>;
+
+    async fn current_slot(&self) -> Result<u64>;
 }
 
 /// Real-time slot + transaction streaming via Yellowstone gRPC.
@@ -28,6 +30,15 @@ pub trait YellowstoneSource: Send + Sync {
     async fn subscribe_with_transactions(
         &self,
     ) -> Result<(mpsc::Receiver<Slot>, mpsc::Receiver<TransactionInfo>)>;
+
+    /// Real-time account updates via Geyser account filters (production path).
+    async fn subscribe_accounts(
+        &self,
+        accounts: &[String],
+    ) -> Result<mpsc::Receiver<AccountState>>;
+
+    /// Lightweight connectivity check for readiness probes (no long-lived stream).
+    async fn health_ping(&self) -> Result<()>;
 }
 
 pub mod solana_rpc;

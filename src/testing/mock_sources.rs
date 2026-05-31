@@ -102,6 +102,15 @@ impl SlotSource for MockSlotSource {
         }
         Ok(())
     }
+
+    async fn current_slot(&self) -> Result<u64> {
+        Ok(self
+            .slots
+            .iter()
+            .map(|s| s.slot)
+            .max()
+            .unwrap_or(0))
+    }
 }
 
 pub fn sample_account(address: &str, lamports: u64) -> AccountState {

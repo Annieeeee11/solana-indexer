@@ -50,6 +50,13 @@ macro_rules! sqlite_backend {
 
             pub const GET_ACTIVE_WALLETS: &str =
                 "SELECT address FROM wallets WHERE is_active = 1";
+
+            pub const GET_CHECKPOINT: &str =
+                "SELECT last_processed_slot FROM indexer_checkpoint WHERE id = 1";
+
+            pub const SET_CHECKPOINT: &str = "\
+                INSERT OR REPLACE INTO indexer_checkpoint (id, last_processed_slot, updated_at) \
+                VALUES (1, ?1, ?2)";
         }
     };
 }
@@ -109,6 +116,15 @@ macro_rules! postgres_backend {
 
             pub const GET_ACTIVE_WALLETS: &str =
                 "SELECT address FROM wallets WHERE is_active = TRUE";
+
+            pub const GET_CHECKPOINT: &str =
+                "SELECT last_processed_slot FROM indexer_checkpoint WHERE id = 1";
+
+            pub const SET_CHECKPOINT: &str = "\
+                INSERT INTO indexer_checkpoint (id, last_processed_slot, updated_at) \
+                VALUES (1, $1, $2) \
+                ON CONFLICT (id) DO UPDATE SET \
+                last_processed_slot = $1, updated_at = $2";
         }
     };
 }

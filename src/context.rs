@@ -7,6 +7,7 @@ use crate::utils::config::Config;
 use crate::utils::errors::Result;
 use crate::utils::metrics::IndexerMetrics;
 use crate::utils::redact::redact_database_url;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,6 +16,7 @@ pub struct AppContext {
     pub config: Config,
     pub cache: Arc<MultiCache>,
     pub metrics: Arc<IndexerMetrics>,
+    pub yellowstone_connected: Arc<AtomicBool>,
     rpc: Arc<SolanaRpc>,
     enrich_rpc: Arc<dyn SlotSource>,
     yellowstone: Option<Arc<dyn YellowstoneSource>>,
@@ -26,6 +28,7 @@ impl AppContext {
         config.warn_if_misconfigured();
 
         let metrics = IndexerMetrics::new();
+        let yellowstone_connected = Arc::new(AtomicBool::new(false));
         let db = create_storage(&config.storage).await?;
         let cache = Arc::new(MultiCache::new(
             config.cache.l1_size,
@@ -83,10 +86,17 @@ impl AppContext {
             "Indexer startup"
         );
 
+        match cache.get_checkpoint().await {
+            Ok(Some(slot)) => tracing::info!(checkpoint = slot, "Resuming from saved checkpoint"),
+            Ok(None) => tracing::info!("No checkpoint found — starting fresh"),
+            Err(e) => tracing::warn!("Could not read checkpoint: {e}"),
+        }
+
         Ok(Self {
             config,
             cache,
             metrics,
+            yellowstone_connected,
             rpc,
             enrich_rpc,
             yellowstone,
@@ -110,10 +120,19 @@ impl AppContext {
             config,
             cache,
             metrics,
+            yellowstone_connected: Arc::new(AtomicBool::new(false)),
             rpc,
             enrich_rpc,
             yellowstone: None,
         }
+    }
+
+    pub fn rpc_client(&self) -> Arc<SolanaRpc> {
+        Arc::clone(&self.rpc)
+    }
+
+    pub fn backfill_max_slots(&self) -> u64 {
+        self.config.backfill_max_slots
     }
 
     pub fn account_source(&self) -> Arc<dyn AccountSource> {

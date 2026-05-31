@@ -6,12 +6,28 @@ use axum::{
     routing::get,
     Json, Router,
 };
+use crate::data_sources::solana_rpc::SolanaRpc;
+use crate::data_sources::YellowstoneSource;
 use crate::storage::cache::multi_cache::MultiCache;
 use crate::utils::errors::{IndexerError, Result};
 use crate::utils::shutdown;
 use serde::Serialize;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::broadcast;
+
+const READINESS_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[derive(Clone)]
+pub struct ReadinessDeps {
+    pub cache: Arc<MultiCache>,
+    pub rpc: Arc<SolanaRpc>,
+    pub yellowstone: Option<Arc<dyn YellowstoneSource>>,
+    /// When set (indexer running), readiness requires an active gRPC stream.
+    pub yellowstone_connected: Option<Arc<AtomicBool>>,
+}
 
 #[derive(Clone)]
 pub struct ApiServeConfig {
@@ -19,12 +35,14 @@ pub struct ApiServeConfig {
     pub port: u16,
     pub api_key: Option<String>,
     pub bind_localhost: bool,
+    pub readiness: Option<ReadinessDeps>,
 }
 
 #[derive(Clone)]
 struct ApiState {
     cache: Arc<MultiCache>,
     api_key: Option<String>,
+    readiness: Option<ReadinessDeps>,
 }
 
 #[derive(Serialize)]
@@ -33,14 +51,32 @@ struct HealthResponse {
 }
 
 #[derive(Serialize)]
+struct ReadinessResponse {
+    status: &'static str,
+    checks: HashMap<String, CheckResult>,
+}
+
+#[derive(Serialize)]
+struct CheckResult {
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<String>,
+}
+
+#[derive(Serialize)]
 struct ErrorBody {
     error: String,
 }
 
-pub fn router(cache: Arc<MultiCache>, api_key: Option<String>) -> Router {
-    let state = ApiState { cache, api_key };
+pub fn router(cache: Arc<MultiCache>, api_key: Option<String>, readiness: Option<ReadinessDeps>) -> Router {
+    let state = ApiState {
+        cache,
+        api_key,
+        readiness,
+    };
     let mut app = Router::new()
         .route("/health", get(health))
+        .route("/ready", get(ready))
         .route("/slots/latest", get(latest_slot))
         .route("/slots/:number", get(slot_by_number))
         .route("/transactions/:signature", get(transaction_by_sig))
@@ -106,11 +142,12 @@ pub async fn serve_until_shutdown(
         port,
         api_key,
         bind_localhost,
+        readiness,
     } = config;
 
     let host = if bind_localhost { "127.0.0.1" } else { "0.0.0.0" };
     let addr = format!("{host}:{port}");
-    let app = router(cache, api_key.clone());
+    let app = router(cache, api_key.clone(), readiness);
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .map_err(|e| IndexerError::ConfigError(format!("Failed to bind {addr}: {e}")))?;
@@ -133,8 +170,123 @@ pub async fn serve_until_shutdown(
     Ok(())
 }
 
+/// Liveness — process is up (no dependency checks).
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
+}
+
+/// Readiness — DB, RPC, and gRPC (when configured) must be healthy.
+async fn ready(State(state): State<ApiState>) -> Response {
+    let Some(deps) = &state.readiness else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ReadinessResponse {
+                status: "not_ready",
+                checks: HashMap::from([(
+                    "config".into(),
+                    CheckResult {
+                        ok: false,
+                        detail: Some("readiness dependencies not configured".into()),
+                    },
+                )]),
+            }),
+        )
+            .into_response();
+    };
+
+    let checks = run_readiness_checks(deps).await;
+    let all_ok = checks.values().all(|c| c.ok);
+    let status = if all_ok { "ready" } else { "not_ready" };
+    let code = if all_ok {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+
+    (code, Json(ReadinessResponse { status, checks })).into_response()
+}
+
+async fn run_readiness_checks(deps: &ReadinessDeps) -> HashMap<String, CheckResult> {
+    let mut checks = HashMap::new();
+
+    checks.insert(
+        "database".into(),
+        match deps.cache.ping_db().await {
+            Ok(()) => CheckResult {
+                ok: true,
+                detail: None,
+            },
+            Err(e) => CheckResult {
+                ok: false,
+                detail: Some(e.to_string()),
+            },
+        },
+    );
+
+    checks.insert(
+        "rpc".into(),
+        match tokio::time::timeout(READINESS_TIMEOUT, deps.rpc.current_slot()).await {
+            Ok(Ok(slot)) => CheckResult {
+                ok: true,
+                detail: Some(format!("chain head slot {slot}")),
+            },
+            Ok(Err(e)) => CheckResult {
+                ok: false,
+                detail: Some(e.to_string()),
+            },
+            Err(_) => CheckResult {
+                ok: false,
+                detail: Some(format!(
+                    "RPC check timed out after {}s",
+                    READINESS_TIMEOUT.as_secs()
+                )),
+            },
+        },
+    );
+
+    checks.insert("grpc".into(), check_grpc(deps).await);
+
+    checks
+}
+
+async fn check_grpc(deps: &ReadinessDeps) -> CheckResult {
+    let Some(yellowstone) = &deps.yellowstone else {
+        return CheckResult {
+            ok: true,
+            detail: Some("not configured".into()),
+        };
+    };
+
+    if let Some(flag) = &deps.yellowstone_connected {
+        if flag.load(Ordering::Relaxed) {
+            return CheckResult {
+                ok: true,
+                detail: Some("stream connected".into()),
+            };
+        }
+        return CheckResult {
+            ok: false,
+            detail: Some("gRPC configured but stream not connected".into()),
+        };
+    }
+
+    match tokio::time::timeout(READINESS_TIMEOUT, yellowstone.health_ping()).await {
+        Ok(Ok(())) => CheckResult {
+            ok: true,
+            detail: Some("connectivity ok".into()),
+        },
+        Ok(Err(e)) => CheckResult {
+            ok: false,
+            detail: Some(e.to_string()),
+        },
+        Err(_) => CheckResult {
+            ok: false,
+            detail: Some(format!(
+                "gRPC ping timed out after {}s",
+                READINESS_TIMEOUT.as_secs()
+            )),
+        },
+    }
 }
 
 async fn latest_slot(State(state): State<ApiState>) -> Response {
@@ -210,9 +362,13 @@ mod tests {
         Arc::new(MultiCache::new(10, 10, 10, db, IndexerMetrics::new()))
     }
 
+    fn test_router(db: Arc<MockDatabase>) -> Router {
+        router(test_cache(db), None, None)
+    }
+
     #[tokio::test]
     async fn health_returns_ok() {
-        let app = router(test_cache(Arc::new(MockDatabase::new())), None);
+        let app = test_router(Arc::new(MockDatabase::new()));
 
         let response = app
             .oneshot(
@@ -228,10 +384,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ready_without_deps_returns_503() {
+        let app = test_router(Arc::new(MockDatabase::new()));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/ready")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
     async fn latest_slot_returns_json() {
         let db = Arc::new(MockDatabase::new());
         db.store_slot(&sample_slot(42)).await.unwrap();
-        let app = router(test_cache(db), None);
+        let app = test_router(db);
 
         let response = app
             .oneshot(
@@ -248,7 +421,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_slot_returns_404() {
-        let app = router(test_cache(Arc::new(MockDatabase::new())), None);
+        let app = test_router(Arc::new(MockDatabase::new()));
 
         let response = app
             .oneshot(
@@ -275,7 +448,7 @@ mod tests {
             accounts: vec![],
         };
         db.store_transaction(tx).await.unwrap();
-        let app = router(test_cache(db), None);
+        let app = test_router(db);
 
         let response = app
             .oneshot(
@@ -295,6 +468,7 @@ mod tests {
         let app = router(
             test_cache(Arc::new(MockDatabase::new())),
             Some("secret".into()),
+            None,
         );
 
         let denied = app

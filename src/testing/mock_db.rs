@@ -10,6 +10,7 @@ pub struct MockDatabase {
     slots: Mutex<HashMap<u64, Slot>>,
     txs: Mutex<HashMap<String, Transaction>>,
     wallets: Mutex<Vec<String>>,
+    checkpoint: Mutex<Option<u64>>,
 }
 
 impl MockDatabase {
@@ -18,6 +19,7 @@ impl MockDatabase {
             slots: Mutex::new(HashMap::new()),
             txs: Mutex::new(HashMap::new()),
             wallets: Mutex::new(vec![]),
+            checkpoint: Mutex::new(None),
         }
     }
 
@@ -26,6 +28,7 @@ impl MockDatabase {
             slots: Mutex::new(HashMap::new()),
             txs: Mutex::new(HashMap::new()),
             wallets: Mutex::new(wallets),
+            checkpoint: Mutex::new(None),
         }
     }
 }
@@ -88,5 +91,14 @@ impl DatabaseStorage for MockDatabase {
 
     async fn get_active_wallets(&self) -> Result<Vec<String>> {
         Ok(self.wallets.lock().unwrap().clone())
+    }
+
+    async fn get_checkpoint(&self) -> Result<Option<u64>> {
+        Ok(*self.checkpoint.lock().unwrap())
+    }
+
+    async fn set_checkpoint(&self, slot: u64) -> Result<()> {
+        *self.checkpoint.lock().unwrap() = Some(slot);
+        Ok(())
     }
 }

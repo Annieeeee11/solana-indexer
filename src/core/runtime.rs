@@ -1,4 +1,4 @@
-use crate::api::{self, ApiServeConfig};
+use crate::api::{self, ApiServeConfig, ReadinessDeps};
 use crate::context::AppContext;
 use crate::core::account_watcher::AccountWatcher;
 use crate::core::slot_pipeline::{self, SlotPipelineOptions};
@@ -140,6 +140,12 @@ fn spawn_api_server(
         port,
         api_key: ctx.config.api_key.clone(),
         bind_localhost: ctx.config.api_bind_localhost,
+        readiness: Some(ReadinessDeps {
+            cache: ctx.cache.clone(),
+            rpc: ctx.rpc_client(),
+            yellowstone: ctx.yellowstone_source(),
+            yellowstone_connected: Some(ctx.yellowstone_connected.clone()),
+        }),
     };
     let shutdown_rx = shutdown_tx.subscribe();
     tracing::info!("Starting HTTP query API on port {port} (parallel with indexer)");
@@ -169,6 +175,7 @@ async fn spawn_account_watcher(
     tracing::info!("Watching {} account(s) in parallel", accounts.len());
     let watcher = AccountWatcher::with_accounts(
         ctx.account_source(),
+        ctx.yellowstone_source(),
         ctx.cache.clone(),
         accounts,
     );

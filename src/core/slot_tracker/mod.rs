@@ -1,10 +1,10 @@
 use crate::core::enrichment_limiter::EnrichmentLimiter;
-use crate::core::types::{Slot, TransactionInfo};
+use crate::core::types::{Slot, SlotStatus, TransactionInfo};
 use crate::data_sources::{SlotSource, YellowstoneSource};
 use crate::storage::cache::multi_cache::MultiCache;
 use crate::utils::errors::{IndexerError, Result};
 use crate::utils::metrics::IndexerMetrics;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
@@ -19,6 +19,8 @@ pub struct SlotTracker {
     cache: Arc<MultiCache>,
     metrics: Arc<IndexerMetrics>,
     enrich_limiter: EnrichmentLimiter,
+    backfill_max_slots: u64,
+    yellowstone_connected: Option<Arc<AtomicBool>>,
     slot_tx: mpsc::Sender<Slot>,
     tx_tx: mpsc::Sender<TransactionInfo>,
 }
@@ -31,6 +33,8 @@ impl SlotTracker {
         cache: Arc<MultiCache>,
         metrics: Arc<IndexerMetrics>,
         enrich_min_interval: Duration,
+        backfill_max_slots: u64,
+        yellowstone_connected: Option<Arc<AtomicBool>>,
         slot_tx: mpsc::Sender<Slot>,
         tx_tx: mpsc::Sender<TransactionInfo>,
     ) -> Self {
@@ -41,21 +45,33 @@ impl SlotTracker {
             cache,
             metrics,
             enrich_limiter: EnrichmentLimiter::new(enrich_min_interval),
+            backfill_max_slots,
+            yellowstone_connected,
             slot_tx,
             tx_tx,
         }
     }
 
     pub async fn start_until(&self, mut shutdown: broadcast::Receiver<()>) -> Result<()> {
+        self.backfill_from_checkpoint().await?;
+
         if let Some(yellowstone) = &self.yellowstone {
             match yellowstone.subscribe_with_transactions().await {
                 Ok((slot_stream, tx_stream)) => {
                     tracing::info!("Using Yellowstone gRPC (real-time streaming)");
+                    if let Some(flag) = &self.yellowstone_connected {
+                        flag.store(true, Ordering::Relaxed);
+                    }
 
-                    match self
+                    let result = self
                         .stream_from_yellowstone(slot_stream, tx_stream, &mut shutdown)
-                        .await
-                    {
+                        .await;
+
+                    if let Some(flag) = &self.yellowstone_connected {
+                        flag.store(false, Ordering::Relaxed);
+                    }
+
+                    match result {
                         Ok(_) => return Ok(()),
                         Err(e) => {
                             tracing::warn!("Yellowstone stream failed: {}, falling back to RPC", e);
@@ -132,6 +148,51 @@ impl SlotTracker {
         }
 
         false
+    }
+
+    async fn backfill_from_checkpoint(&self) -> Result<()> {
+        let Some(last) = self.cache.get_checkpoint().await? else {
+            return Ok(());
+        };
+
+        let current = match self.rpc.current_slot().await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("Backfill skipped: could not read chain head: {e}");
+                return Ok(());
+            }
+        };
+
+        if current <= last {
+            tracing::info!(checkpoint = last, "Resuming from checkpoint (chain head caught up)");
+            return Ok(());
+        }
+
+        let end = std::cmp::min(current, last.saturating_add(self.backfill_max_slots));
+        tracing::info!(
+            from = last + 1,
+            to = end,
+            chain_head = current,
+            "Backfilling missed slots after restart"
+        );
+
+        for slot_num in (last + 1)..=end {
+            let mut slot = Slot {
+                slot: slot_num,
+                parent: Some(slot_num.saturating_sub(1)),
+                status: SlotStatus::Confirmed,
+                timestamp: chrono::Utc::now().timestamp(),
+                block_hash: None,
+                block_height: None,
+            };
+            let _ = self.enrich_rpc.enrich_slot_block_metadata(&mut slot).await;
+            if let Err(e) = self.cache.store_slot(slot).await {
+                tracing::warn!("Backfill failed at slot {slot_num}: {e}");
+                break;
+            }
+        }
+
+        Ok(())
     }
 
     async fn forward_tx(&self, tx: TransactionInfo) -> bool {
@@ -254,6 +315,8 @@ mod tests {
             cache.clone(),
             metrics,
             Duration::from_millis(0),
+            100,
+            None,
             slot_tx,
             tx_tx,
         );

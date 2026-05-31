@@ -315,6 +315,22 @@ macro_rules! impl_database_storage {
                     .await?;
                 Ok(rows.iter().map(|r| sqlx::Row::get(r, 0)).collect())
             }
+
+            async fn get_checkpoint(&self) -> $crate::utils::errors::Result<Option<u64>> {
+                let row = sqlx::query($crate::storage::queries::$queries::GET_CHECKPOINT)
+                    .fetch_optional(&self.pool)
+                    .await?;
+                Ok(row.as_ref().map(|r| sqlx::Row::get::<i64, _>(r, 0) as u64))
+            }
+
+            async fn set_checkpoint(&self, slot: u64) -> $crate::utils::errors::Result<()> {
+                sqlx::query($crate::storage::queries::$queries::SET_CHECKPOINT)
+                    .bind(slot as i64)
+                    .bind(chrono::Utc::now().timestamp())
+                    .execute(&self.pool)
+                    .await?;
+                Ok(())
+            }
         }
     };
 }

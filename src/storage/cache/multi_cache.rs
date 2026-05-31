@@ -27,7 +27,7 @@ impl MultiCache {
         Self {
             l1: Arc::new(L1HotSlots::new(l1_size)),
             l2: Arc::new(L2Transactions::new(l2_size)),
-            l3: Arc::new(L3Accounts::new(db.clone(), l3_size)),
+            l3: Arc::new(L3Accounts::new(db.clone(), l3_size, metrics.clone())),
             db,
             metrics,
         }
@@ -36,7 +36,18 @@ impl MultiCache {
     pub async fn store_slot(&self, slot: Slot) -> Result<()> {
         self.l1.insert(slot.clone()).await;
         self.metrics.slots_ingested.fetch_add(1, Ordering::Relaxed);
-        self.db.store_slot(&slot).await
+        self.db.store_slot(&slot).await?;
+        self.db.set_checkpoint(slot.slot).await
+    }
+
+    pub async fn get_checkpoint(&self) -> Result<Option<u64>> {
+        self.db.get_checkpoint().await
+    }
+
+    /// Lightweight DB probe for readiness checks.
+    pub async fn ping_db(&self) -> Result<()> {
+        self.db.get_checkpoint().await?;
+        Ok(())
     }
 
     pub async fn store_transaction(&self, tx: Transaction) -> Result<()> {

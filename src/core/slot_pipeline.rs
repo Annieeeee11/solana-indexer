@@ -40,6 +40,8 @@ pub fn spawn(
         ctx.cache.clone(),
         ctx.metrics.clone(),
         ctx.slot_enrich_interval(),
+        ctx.backfill_max_slots(),
+        Some(ctx.yellowstone_connected.clone()),
         slot_tx,
         tx_tx,
     );

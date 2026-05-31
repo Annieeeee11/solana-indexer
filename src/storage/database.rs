@@ -24,4 +24,8 @@ pub trait DatabaseStorage: Send + Sync {
     async fn list_wallets(&self, active_only: bool) -> Result<Vec<(String, Option<String>, i64)>>;
 
     async fn get_active_wallets(&self) -> Result<Vec<String>>;
+
+    async fn get_checkpoint(&self) -> Result<Option<u64>>;
+
+    async fn set_checkpoint(&self, slot: u64) -> Result<()>;
 }

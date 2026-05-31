@@ -1,4 +1,4 @@
-use crate::api::{self, ApiServeConfig};
+use crate::api::{self, ApiServeConfig, ReadinessDeps};
 use crate::context::AppContext;
 use crate::utils::cli_animations::Cli;
 use crate::utils::errors::Result;
@@ -9,7 +9,7 @@ pub async fn serve(port: Option<u16>) -> Result<()> {
     let port = port.or(ctx.config.api_port).unwrap_or(8080);
 
     Cli::success(&format!("Starting HTTP query API on port {port}"));
-    Cli::info("Endpoints: /health, /slots/latest, /slots/{{n}}, /transactions/{{sig}}, /accounts/{{addr}}");
+    Cli::info("Endpoints: /health, /ready, /slots/latest, /slots/{{n}}, /transactions/{{sig}}, /accounts/{{addr}}");
     if ctx.config.api_key.is_some() {
         Cli::info("Auth: set X-API-Key or Authorization: Bearer <API_KEY>");
     } else {
@@ -20,11 +20,19 @@ pub async fn serve(port: Option<u16>) -> Result<()> {
     }
     Cli::info("Ctrl+C to stop");
 
+    let readiness = ReadinessDeps {
+        cache: ctx.cache.clone(),
+        rpc: ctx.rpc_client(),
+        yellowstone: ctx.yellowstone_source(),
+        yellowstone_connected: None,
+    };
+
     api::serve(ApiServeConfig {
         cache: ctx.cache,
         port,
         api_key: ctx.config.api_key,
         bind_localhost: ctx.config.api_bind_localhost,
+        readiness: Some(readiness),
     })
     .await
 }

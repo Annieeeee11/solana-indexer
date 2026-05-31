@@ -1,10 +1,10 @@
 use crate::core::types::AccountState;
-use crate::data_sources::AccountSource;
+use crate::data_sources::{AccountSource, YellowstoneSource};
 use crate::storage::cache::multi_cache::MultiCache;
 use crate::utils::errors::Result;
 use crate::utils::shutdown;
 use std::sync::Arc;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 use tokio::time::{interval, Duration};
 
 #[cfg(not(test))]
@@ -15,6 +15,7 @@ const POLL_INTERVAL_SECS: u64 = 1;
 
 pub struct AccountWatcher {
     accounts_source: Arc<dyn AccountSource>,
+    yellowstone: Option<Arc<dyn YellowstoneSource>>,
     cache: Arc<MultiCache>,
     accounts_to_watch: Vec<String>,
 }
@@ -22,11 +23,13 @@ pub struct AccountWatcher {
 impl AccountWatcher {
     pub fn with_accounts(
         accounts_source: Arc<dyn AccountSource>,
+        yellowstone: Option<Arc<dyn YellowstoneSource>>,
         cache: Arc<MultiCache>,
         accounts: Vec<String>,
     ) -> Self {
         Self {
             accounts_source,
+            yellowstone,
             cache,
             accounts_to_watch: accounts,
         }
@@ -62,11 +65,81 @@ impl AccountWatcher {
     pub async fn run_until<F>(
         &self,
         mut on_change: F,
+        shutdown: broadcast::Receiver<()>,
+    ) -> Result<()>
+    where
+        F: FnMut(&str, &AccountState, &AccountState),
+    {
+        if let Some(yellowstone) = &self.yellowstone {
+            if !self.accounts_to_watch.is_empty() {
+                match yellowstone
+                    .subscribe_accounts(&self.accounts_to_watch)
+                    .await
+                {
+                    Ok(mut stream) => {
+                        tracing::info!(
+                            count = self.accounts_to_watch.len(),
+                            "Account watcher using Yellowstone gRPC filters"
+                        );
+                        return self
+                            .run_grpc_until(&mut on_change, shutdown, &mut stream)
+                            .await;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Yellowstone account subscription failed: {e}, falling back to RPC poll"
+                        );
+                    }
+                }
+            }
+        }
+
+        self.run_poll_until(on_change, shutdown).await
+    }
+
+    async fn run_grpc_until<F>(
+        &self,
+        on_change: &mut F,
+        mut shutdown: broadcast::Receiver<()>,
+        stream: &mut mpsc::Receiver<AccountState>,
+    ) -> Result<()>
+    where
+        F: FnMut(&str, &AccountState, &AccountState),
+    {
+        loop {
+            tokio::select! {
+                biased;
+                _ = shutdown.recv() => {
+                    tracing::info!("Account watcher stopping");
+                    return Ok(());
+                }
+                update = stream.recv() => {
+                    let Some(current) = update else {
+                        tracing::warn!("Yellowstone account stream closed, falling back to RPC poll");
+                        return self.run_poll_until(on_change, shutdown).await;
+                    };
+
+                    let address = current.address.clone();
+                    if let Some(previous) = self.cache.get_account(&address).await? {
+                        if previous.lamports != current.lamports || previous.data != current.data {
+                            on_change(&address, &previous, &current);
+                        }
+                    }
+                    self.cache.store_account(current).await?;
+                }
+            }
+        }
+    }
+
+    async fn run_poll_until<F>(
+        &self,
+        mut on_change: F,
         mut shutdown: broadcast::Receiver<()>,
     ) -> Result<()>
     where
         F: FnMut(&str, &AccountState, &AccountState),
     {
+        tracing::debug!("Account watcher using RPC polling ({}s interval)", POLL_INTERVAL_SECS);
         let mut ticker = interval(Duration::from_secs(POLL_INTERVAL_SECS));
         let accounts = self.accounts_to_watch.clone();
 
@@ -122,6 +195,7 @@ mod tests {
 
         let watcher = AccountWatcher::with_accounts(
             source.clone(),
+            None,
             cache.clone(),
             vec!["addr1".into()],
         );
