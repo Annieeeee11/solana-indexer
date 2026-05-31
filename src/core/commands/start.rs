@@ -48,7 +48,7 @@ pub async fn start() -> Result<()> {
     Ok(())
 }
 
-pub async fn track_slots(leaders: bool, transactions: bool) -> Result<()> {
+pub async fn track_slots(leaders: bool, transactions: bool, watch_accounts: bool) -> Result<()> {
     Cli::banner();
     let ctx = AppContext::new().await?;
 
@@ -59,23 +59,49 @@ pub async fn track_slots(leaders: bool, transactions: bool) -> Result<()> {
     if transactions {
         info.push("txs");
     }
+    if watch_accounts {
+        info.push("accounts");
+    }
     Cli::success(&format!("Tracking: {}", info.join(", ")));
 
     Cli::info(ctx.streaming_mode_label());
+    if watch_accounts {
+        let watch_count = runtime::collect_watch_accounts(&ctx).await?.len();
+        if watch_count > 0 {
+            Cli::info(&format!(
+                "Slot pipeline + {} account(s) watching in parallel",
+                watch_count
+            ));
+        } else {
+            Cli::info(
+                "Account watching enabled (add wallets or WATCH_ACCOUNTS to watch addresses)",
+            );
+        }
+    }
     Cli::info("Ctrl+C to stop");
 
     let (on_slot, on_tx) = slot_and_tx_handlers();
+    let pipeline = SlotPipelineOptions {
+        show_leaders: leaders,
+        show_transactions: transactions,
+    };
 
-    crate::core::slot_pipeline::run(
-        ctx,
-        SlotPipelineOptions {
-            show_leaders: leaders,
-            show_transactions: transactions,
-        },
-        on_slot,
-        on_tx,
-    )
-    .await?;
+    if watch_accounts {
+        runtime::run(
+            ctx,
+            IndexerOptions {
+                pipeline,
+                watch_accounts: true,
+                api_port: None,
+            },
+            on_slot,
+            on_tx,
+            account_change_handler(),
+        )
+        .await?;
+    } else {
+        crate::core::slot_pipeline::run(ctx, pipeline, on_slot, on_tx).await?;
+    }
 
     Ok(())
 }

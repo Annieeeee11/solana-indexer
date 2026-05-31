@@ -70,6 +70,15 @@ impl SlotTracker {
 
                     tracing::debug!("Received slot from Yellowstone: {}", slot.slot);
 
+                    let mut slot = slot;
+                    if let Err(e) = self.rpc.enrich_slot_block_metadata(&mut slot).await {
+                        tracing::debug!(
+                            "Slot {} metadata enrichment skipped: {}",
+                            slot.slot,
+                            e
+                        );
+                    }
+
                     if self.slot_tx.send(slot.clone()).await.is_err() {
                         tracing::error!("Failed to send slot to pipeline");
                         continue;
@@ -174,5 +183,18 @@ mod tests {
         assert_eq!(cached.slot, 42);
 
         tracker_task.abort();
+    }
+
+    #[tokio::test]
+    async fn yellowstone_path_enriches_block_metadata_via_rpc() {
+        let mut slot = sample_slot(99);
+        assert!(slot.block_hash.is_none());
+
+        let rpc: Arc<dyn SlotSource> = Arc::new(MockSlotSource::new("leader"));
+        rpc.enrich_slot_block_metadata(&mut slot)
+            .await
+            .expect("enrichment should succeed");
+        assert_eq!(slot.block_hash.as_deref(), Some("mock-hash-99"));
+        assert_eq!(slot.block_height, Some(99));
     }
 }

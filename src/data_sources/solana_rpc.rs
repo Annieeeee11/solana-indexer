@@ -183,6 +183,29 @@ impl SolanaRpc {
             .map_err(|e| IndexerError::RpcError(e.to_string()))?;
         self.get_leader_at_slot(slot).await
     }
+
+    pub async fn enrich_slot_block_metadata(&self, slot: &mut Slot) -> Result<()> {
+        if slot.block_hash.is_some() && slot.block_height.is_some() {
+            return Ok(());
+        }
+
+        match self.client.get_block(slot.slot).await {
+            Ok(block) => {
+                slot.block_hash = Some(block.blockhash.to_string());
+                slot.block_height = block.block_height;
+            }
+            Err(e) => {
+                let err_str = e.to_string();
+                if err_str.contains("skipped") || err_str.contains("not available") {
+                    tracing::debug!("Block {} not available for metadata enrichment", slot.slot);
+                } else {
+                    tracing::debug!("Failed to enrich slot {} metadata: {}", slot.slot, e);
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -208,5 +231,9 @@ impl SlotSource for SolanaRpc {
 
     async fn get_slot_leader(&self) -> Result<String> {
         SolanaRpc::get_slot_leader(self).await
+    }
+
+    async fn enrich_slot_block_metadata(&self, slot: &mut Slot) -> Result<()> {
+        SolanaRpc::enrich_slot_block_metadata(self, slot).await
     }
 }

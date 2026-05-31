@@ -19,6 +19,9 @@ pub trait SlotSource: Send + Sync {
     async fn get_leader_at_slot(&self, slot: u64) -> Result<String>;
 
     async fn get_slot_leader(&self) -> Result<String>;
+
+    /// Fill `block_hash` / `block_height` when missing (e.g. Yellowstone slot updates).
+    async fn enrich_slot_block_metadata(&self, slot: &mut Slot) -> Result<()>;
 }
 
 /// Real-time slot + transaction streaming via Yellowstone gRPC.

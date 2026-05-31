@@ -41,6 +41,9 @@ enum Track {
         leaders: bool,
         #[arg(short, long)]
         transactions: bool,
+        /// Also watch active wallets + WATCH_ACCOUNTS (same as `indexer start`)
+        #[arg(short, long)]
+        watch_accounts: bool,
     },
     /// Manage wallets
     Wallets {
@@ -87,9 +90,11 @@ async fn main() -> Result<()> {
     match Args::parse().cmd {
         Cmd::Start => commands::start().await,
         Cmd::Track { what } => match what {
-            Track::Slots { leaders, transactions } => {
-                commands::track_slots(leaders, transactions).await
-            }
+            Track::Slots {
+                leaders,
+                transactions,
+                watch_accounts,
+            } => commands::track_slots(leaders, transactions, watch_accounts).await,
             Track::Wallets { action } => match action {
                 Wallet::Add { address, name } => commands::wallet_add(address, name).await,
                 Wallet::Remove { address } => commands::wallet_remove(address).await,
