@@ -6,6 +6,7 @@ use crate::storage::factory::create_storage;
 use crate::utils::config::Config;
 use crate::utils::errors::Result;
 use crate::utils::metrics::IndexerMetrics;
+use crate::utils::redact::redact_database_url;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -44,6 +45,30 @@ impl AppContext {
                     config.rpc.yellowstone_grpc_token.clone(),
                 )) as Arc<dyn YellowstoneSource>
             });
+
+        let db_label = config
+            .storage
+            .postgres_url
+            .as_ref()
+            .map(|url| format!("PostgreSQL ({})", redact_database_url(url)))
+            .unwrap_or_else(|| format!("SQLite ({:?})", config.storage.sqlite_path));
+        let tx_mode = if yellowstone.is_some() {
+            "Yellowstone slots (tx stream off by default — see README)"
+        } else {
+            "RPC polling (slots + optional block txs)"
+        };
+        tracing::info!(
+            db = %db_label,
+            streaming = %if yellowstone.is_some() {
+                "Yellowstone gRPC primary, RPC fallback"
+            } else {
+                "RPC polling only"
+            },
+            transactions = %tx_mode,
+            watch_accounts = config.watch_accounts.len(),
+            api_port = ?config.api_port,
+            "Indexer startup"
+        );
 
         Ok(Self {
             config,

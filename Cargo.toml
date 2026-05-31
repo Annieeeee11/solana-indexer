@@ -2,6 +2,18 @@
 name = "solana-indexer"
 version = "0.1.0"
 edition = "2021"
+description = "Real-time Solana blockchain indexer with MultiCache and optional HTTP API"
+license = "MIT"
+repository = "https://github.com/Annieeeee11/solana-indexer"
+readme = "README.md"
+homepage = "https://github.com/Annieeeee11/solana-indexer"
+keywords = ["solana", "blockchain", "indexer", "yellowstone"]
+categories = ["command-line-utilities", "database"]
+
+[features]
+default = ["sqlite", "postgres"]
+sqlite = []
+postgres = []
 
 [dependencies]
 # HTTP API — pinned to 0.7.x (`:param` routes). Yellowstone/Tonic pulls axum 0.8 transitively.
@@ -40,5 +52,5 @@ tower = { version = "0.5", features = ["util"] }
 tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread"] }
 
 [[bin]]
-name = "indexer"
+name = "solana-indexer"
 path = "src/bin/cli.rs"

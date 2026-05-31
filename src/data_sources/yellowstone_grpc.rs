@@ -55,9 +55,10 @@ impl YellowstoneGrpc {
      }
 
     fn parse_slot(s: &SubscribeUpdateSlot) -> Slot {
+        let parent = s.parent.filter(|&p| p > 0);
         Slot {
             slot: s.slot,
-            parent: s.parent,
+            parent,
             status: match s.status {
                 0 => SlotStatus::Processed,
                 1 => SlotStatus::Confirmed,

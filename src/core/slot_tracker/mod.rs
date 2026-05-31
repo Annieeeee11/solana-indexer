@@ -7,7 +7,7 @@ use crate::utils::metrics::IndexerMetrics;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 
 pub struct SlotTracker {
     yellowstone: Option<Arc<dyn YellowstoneSource>>,
@@ -40,13 +40,16 @@ impl SlotTracker {
         }
     }
 
-    pub async fn start(&self) -> Result<()> {
+    pub async fn start_until(&self, mut shutdown: broadcast::Receiver<()>) -> Result<()> {
         if let Some(yellowstone) = &self.yellowstone {
             match yellowstone.subscribe_with_transactions().await {
                 Ok((slot_stream, tx_stream)) => {
                     tracing::info!("Using Yellowstone gRPC (real-time streaming)");
 
-                    match self.stream_from_yellowstone(slot_stream, tx_stream).await {
+                    match self
+                        .stream_from_yellowstone(slot_stream, tx_stream, &mut shutdown)
+                        .await
+                    {
                         Ok(_) => return Ok(()),
                         Err(e) => {
                             tracing::warn!("Yellowstone stream failed: {}, falling back to RPC", e);
@@ -61,7 +64,7 @@ impl SlotTracker {
             tracing::info!("No Yellowstone configured, using RPC polling");
         }
         tracing::info!("Using RPC polling (fallback mode)");
-        self.poll_from_rpc().await
+        self.poll_from_rpc(&mut shutdown).await
     }
 
     async fn maybe_enrich_slot(&self, slot: &mut Slot) {
@@ -81,13 +84,49 @@ impl SlotTracker {
         }
     }
 
+    async fn forward_slot(&self, mut slot: Slot) -> bool {
+        self.maybe_enrich_slot(&mut slot).await;
+
+        if self.slot_tx.send(slot.clone()).await.is_err() {
+            tracing::debug!("Pipeline channel closed, stopping slot tracker");
+            return true;
+        }
+
+        if let Err(e) = self.cache.store_slot(slot).await {
+            tracing::error!("Failed to cache slot: {}", e);
+        } else {
+            self.metrics.maybe_log_periodic(100);
+        }
+
+        false
+    }
+
+    async fn forward_tx(&self, tx: TransactionInfo) -> bool {
+        if self.tx_tx.send(tx.clone()).await.is_err() {
+            tracing::debug!("Pipeline channel closed, stopping slot tracker");
+            return true;
+        }
+
+        if let Err(e) = self.cache.store_transaction(tx.into()).await {
+            tracing::error!("Failed to cache transaction: {}", e);
+        }
+
+        false
+    }
+
     async fn stream_from_yellowstone(
         &self,
         mut slot_stream: mpsc::Receiver<Slot>,
         mut tx_stream: mpsc::Receiver<TransactionInfo>,
+        shutdown: &mut broadcast::Receiver<()>,
     ) -> Result<()> {
         loop {
             tokio::select! {
+                biased;
+                _ = shutdown.recv() => {
+                    tracing::debug!("Slot tracker stopping (shutdown signal)");
+                    return Ok(());
+                }
                 slot = slot_stream.recv() => {
                     let Some(slot) = slot else {
                         return Err(IndexerError::ChannelError(
@@ -97,18 +136,8 @@ impl SlotTracker {
 
                     tracing::debug!(slot = slot.slot, source = "yellowstone", "ingest_slot");
 
-                    let mut slot = slot;
-                    self.maybe_enrich_slot(&mut slot).await;
-
-                    if self.slot_tx.send(slot.clone()).await.is_err() {
-                        tracing::error!("Failed to send slot to pipeline");
-                        continue;
-                    }
-
-                    if let Err(e) = self.cache.store_slot(slot).await {
-                        tracing::error!("Failed to cache slot: {}", e);
-                    } else {
-                        self.metrics.maybe_log_periodic(100);
+                    if self.forward_slot(slot).await {
+                        return Ok(());
                     }
                 }
                 tx = tx_stream.recv() => {
@@ -120,51 +149,45 @@ impl SlotTracker {
 
                     tracing::debug!(signature = %tx.signature, source = "yellowstone", "ingest_tx");
 
-                    if self.tx_tx.send(tx.clone()).await.is_err() {
-                        tracing::error!("Failed to send tx to pipeline");
-                        continue;
-                    }
-
-                    if let Err(e) = self.cache.store_transaction(tx.into()).await {
-                        tracing::error!("Failed to cache transaction: {}", e);
+                    if self.forward_tx(tx).await {
+                        return Ok(());
                     }
                 }
             }
         }
     }
 
-    async fn poll_from_rpc(&self) -> Result<()> {
+    async fn poll_from_rpc(&self, shutdown: &mut broadcast::Receiver<()>) -> Result<()> {
         let mut slot_stream = self.rpc.subscribe_slots().await?;
 
-        while let Some(slot) = slot_stream.recv().await {
-            tracing::debug!(slot = slot.slot, source = "rpc", "ingest_slot");
+        loop {
+            tokio::select! {
+                biased;
+                _ = shutdown.recv() => {
+                    tracing::debug!("Slot tracker stopping (shutdown signal)");
+                    return Ok(());
+                }
+                slot = slot_stream.recv() => {
+                    let Some(slot) = slot else {
+                        return Ok(());
+                    };
 
-            if let Ok(transactions) = self.rpc.get_block_with_transactions(slot.slot).await {
-                for tx in transactions {
-                    if self.tx_tx.send(tx.clone()).await.is_err() {
-                        tracing::error!("Failed to send tx to pipeline");
-                        continue;
+                    tracing::debug!(slot = slot.slot, source = "rpc", "ingest_slot");
+
+                    if let Ok(transactions) = self.rpc.get_block_with_transactions(slot.slot).await {
+                        for tx in transactions {
+                            if self.forward_tx(tx).await {
+                                return Ok(());
+                            }
+                        }
                     }
 
-                    if let Err(e) = self.cache.store_transaction(tx.into()).await {
-                        tracing::error!("Failed to cache transaction: {}", e);
+                    if self.forward_slot(slot).await {
+                        return Ok(());
                     }
                 }
             }
-
-            if self.slot_tx.send(slot.clone()).await.is_err() {
-                tracing::error!("Failed to send slot to pipeline");
-                continue;
-            }
-
-            if let Err(e) = self.cache.store_slot(slot).await {
-                tracing::error!("Failed to cache slot: {}", e);
-            } else {
-                self.metrics.maybe_log_periodic(100);
-            }
         }
-
-        Ok(())
     }
 }
 
@@ -177,6 +200,7 @@ mod tests {
     use crate::testing::mock_db::MockDatabase;
     use crate::testing::mock_sources::MockSlotSource;
     use crate::utils::metrics::IndexerMetrics;
+    use tokio::sync::broadcast;
     use tokio::time::{timeout, Duration};
 
     #[tokio::test]
@@ -199,8 +223,9 @@ mod tests {
             slot_tx,
             tx_tx,
         );
+        let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
         let tracker_task = tokio::spawn(async move {
-            tracker.start().await
+            tracker.start_until(shutdown_rx).await
         });
 
         let received = timeout(Duration::from_secs(2), slot_rx.recv())

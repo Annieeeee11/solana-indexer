@@ -43,8 +43,10 @@ pub fn spawn(
         tx_tx,
     );
 
+    let shutdown_rx_tracker = shutdown.subscribe();
+
     let tracker_handle = tokio::spawn(async move {
-        if let Err(e) = tracker.start().await {
+        if let Err(e) = tracker.start_until(shutdown_rx_tracker).await {
             tracing::error!("Tracker error: {}", e);
         }
     });

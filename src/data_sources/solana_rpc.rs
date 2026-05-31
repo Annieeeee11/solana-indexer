@@ -197,18 +197,42 @@ impl SolanaRpc {
             return Ok(());
         }
 
-        match self.client.get_block(slot.slot).await {
-            Ok(block) => {
-                slot.block_hash = Some(block.blockhash.to_string());
-                slot.block_height = block.block_height;
+        const RETRY_DELAY: Duration = Duration::from_millis(500);
+
+        for attempt in 0..2 {
+            if attempt > 0 {
+                tokio::time::sleep(RETRY_DELAY).await;
             }
-            Err(e) => {
-                self.metrics.rpc_errors.fetch_add(1, Ordering::Relaxed);
-                let err_str = e.to_string();
-                if err_str.contains("skipped") || err_str.contains("not available") {
-                    tracing::debug!("Block {} not available for metadata enrichment", slot.slot);
-                } else {
-                    tracing::debug!("Failed to enrich slot {} metadata: {}", slot.slot, e);
+
+            match self.client.get_block(slot.slot).await {
+                Ok(block) => {
+                    slot.block_hash = Some(block.blockhash.to_string());
+                    slot.block_height = block.block_height;
+                    return Ok(());
+                }
+                Err(e) => {
+                    self.metrics.rpc_errors.fetch_add(1, Ordering::Relaxed);
+                    let err_str = e.to_string();
+                    if err_str.contains("skipped") || err_str.contains("not available") {
+                        tracing::debug!(
+                            "Block {} not available for metadata enrichment (attempt {})",
+                            slot.slot,
+                            attempt + 1
+                        );
+                    } else if attempt == 1 {
+                        tracing::warn!(
+                            "Failed to enrich slot {} metadata after retry: {}",
+                            slot.slot,
+                            e
+                        );
+                    } else {
+                        tracing::debug!(
+                            "Failed to enrich slot {} metadata (attempt {}): {}",
+                            slot.slot,
+                            attempt + 1,
+                            e
+                        );
+                    }
                 }
             }
         }
