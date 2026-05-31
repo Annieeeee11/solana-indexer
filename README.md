@@ -4,16 +4,12 @@
 ![Rust](https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust)
 [![SQLite](https://img.shields.io/badge/SQLite-%2307405e.svg?logo=sqlite&logoColor=white)](#)
 [![Postgres](https://img.shields.io/badge/Postgres-%23316192.svg?logo=postgresql&logoColor=white)](#)
+[![Crates.io](https://img.shields.io/crates/v/solana-stream-indexer.svg)](https://crates.io/crates/solana-stream-indexer)
 
 A high-performance, Solana blockchain indexer built with Rust. Streams slots via Yellowstone gRPC (with RPC fallback), persists to PostgreSQL, and exposes a CLI + HTTP query API over a multi-tier cache.
 
 
 ## 🖥️ Demo
-
-### Live Demo
-- **API:** https://solana-stream-indexer-demo.fly.dev/health
-- **Latest slot:** `curl -H "X-API-Key: YOUR_KEY" https://solana-stream-indexer-demo.fly.dev/slots/latest`
-- See [docs/DEMO.md](docs/DEMO.md) for deployment instructions. CLI reference: [docs/COMMANDS.md](docs/COMMANDS.md).
 
 ### Interface
 ![Solana Indexer](public/image_copy.png)
