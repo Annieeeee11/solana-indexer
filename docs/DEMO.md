@@ -1,5 +1,7 @@
 # Live free demo deployment
 
+> CLI reference: [COMMANDS.md](COMMANDS.md)
+
 This guide hosts a **read-only public API** so others can try the indexer without installing Rust. Your Yellowstone + RPC keys stay on the server; users only hit HTTP endpoints.
 
 ## Architecture
