@@ -20,18 +20,6 @@ pub struct AccountWatcher {
 }
 
 impl AccountWatcher {
-    pub fn new(accounts_source: Arc<dyn AccountSource>, cache: Arc<MultiCache>) -> Self {
-        Self {
-            accounts_source,
-            cache,
-            accounts_to_watch: vec![],
-        }
-    }
-
-    pub fn add_account(&mut self, address: String) {
-        self.accounts_to_watch.push(address);
-    }
-
     pub fn with_accounts(
         accounts_source: Arc<dyn AccountSource>,
         cache: Arc<MultiCache>,

@@ -136,16 +136,54 @@ impl SlotTracker {
 
 #[cfg(test)]
 mod tests {
-    use crate::data_sources::SlotSource;
+    use super::*;
+    use crate::core::channels;
+    use crate::core::types::{Slot, SlotStatus};
+    use crate::storage::cache::multi_cache::MultiCache;
+    use crate::testing::mock_db::MockDatabase;
     use crate::testing::mock_sources::MockSlotSource;
     use std::sync::Arc;
+    use tokio::time::{timeout, Duration};
+
+    fn sample_slot(n: u64) -> Slot {
+        Slot {
+            slot: n,
+            parent: Some(n.saturating_sub(1)),
+            status: SlotStatus::Confirmed,
+            timestamp: 1,
+            block_hash: None,
+            block_height: None,
+        }
+    }
 
     #[tokio::test]
-    async fn rpc_fallback_uses_mock_slot_source() {
-        let rpc: Arc<dyn SlotSource> = Arc::new(MockSlotSource::new("mock-leader-pubkey"));
-        assert_eq!(
-            rpc.get_slot_leader().await.unwrap(),
-            "mock-leader-pubkey"
-        );
+    async fn rpc_poll_forwards_slot_to_channel_and_cache() {
+        let slot = sample_slot(42);
+        let rpc: Arc<dyn SlotSource> =
+            Arc::new(MockSlotSource::with_slots("mock-leader", vec![slot.clone()]));
+        let db = Arc::new(MockDatabase::new());
+        let cache = Arc::new(MultiCache::new(10, 10, 10, db));
+        let (slot_tx, mut slot_rx) = channels::slot_channel();
+        let (tx_tx, _tx_rx) = channels::transaction_channel();
+
+        let tracker = SlotTracker::new(None, rpc, cache.clone(), slot_tx, tx_tx);
+        let tracker_task = tokio::spawn(async move {
+            tracker.start().await
+        });
+
+        let received = timeout(Duration::from_secs(2), slot_rx.recv())
+            .await
+            .expect("should receive slot within 2s")
+            .expect("slot channel should stay open until slot is sent");
+        assert_eq!(received.slot, 42);
+
+        let cached = cache
+            .get_slot(42)
+            .await
+            .expect("cache read should succeed")
+            .expect("slot should be stored in cache");
+        assert_eq!(cached.slot, 42);
+
+        tracker_task.abort();
     }
 }

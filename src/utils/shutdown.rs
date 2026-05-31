@@ -29,60 +29,34 @@ async fn wait_ctrl_c(shutdown_tx: broadcast::Sender<()>, message: &str) {
     let _ = shutdown_tx.send(());
 }
 
-/// Wait for Ctrl+C (broadcasting shutdown) or any of two tasks to finish.
-pub async fn wait_ctrl_c_or_2(
-    shutdown_tx: broadcast::Sender<()>,
-    message: &str,
-    h0: &mut JoinHandle<()>,
-    l0: &str,
-    h1: &mut JoinHandle<()>,
-    l1: &str,
-) {
-    tokio::select! {
-        () = wait_ctrl_c(shutdown_tx, message) => {}
-        result = h0 => log_join_error(l0, result),
-        result = h1 => log_join_error(l1, result),
+async fn wait_for_any_task(tasks: &mut [(&mut JoinHandle<()>, &str)]) {
+    loop {
+        for (handle, label) in tasks.iter_mut() {
+            if handle.is_finished() {
+                let dummy = tokio::spawn(async {});
+                let finished = std::mem::replace(*handle, dummy);
+                log_join_error(label, finished.await);
+                return;
+            }
+        }
+        tokio::task::yield_now().await;
     }
 }
 
-/// Wait for Ctrl+C (broadcasting shutdown) or any of three tasks to finish.
-pub async fn wait_ctrl_c_or_3(
+/// Wait for Ctrl+C (broadcasting shutdown) or any labeled task to finish.
+pub async fn wait_ctrl_c_or_any(
     shutdown_tx: broadcast::Sender<()>,
     message: &str,
-    h0: &mut JoinHandle<()>,
-    l0: &str,
-    h1: &mut JoinHandle<()>,
-    l1: &str,
-    h2: &mut JoinHandle<()>,
-    l2: &str,
+    tasks: &mut [(&mut JoinHandle<()>, &str)],
 ) {
-    tokio::select! {
-        () = wait_ctrl_c(shutdown_tx, message) => {}
-        result = h0 => log_join_error(l0, result),
-        result = h1 => log_join_error(l1, result),
-        result = h2 => log_join_error(l2, result),
+    if tasks.is_empty() {
+        wait_ctrl_c(shutdown_tx, message).await;
+        return;
     }
-}
 
-/// Wait for Ctrl+C (broadcasting shutdown) or any of four tasks to finish.
-pub async fn wait_ctrl_c_or_4(
-    shutdown_tx: broadcast::Sender<()>,
-    message: &str,
-    h0: &mut JoinHandle<()>,
-    l0: &str,
-    h1: &mut JoinHandle<()>,
-    l1: &str,
-    h2: &mut JoinHandle<()>,
-    l2: &str,
-    h3: &mut JoinHandle<()>,
-    l3: &str,
-) {
     tokio::select! {
         () = wait_ctrl_c(shutdown_tx, message) => {}
-        result = h0 => log_join_error(l0, result),
-        result = h1 => log_join_error(l1, result),
-        result = h2 => log_join_error(l2, result),
-        result = h3 => log_join_error(l3, result),
+        () = wait_for_any_task(tasks) => {}
     }
 }
 

@@ -115,13 +115,13 @@ pub async fn run(
     let (mut tracker_handle, mut display_handle) =
         spawn(ctx, yellowstone, options, on_slot, on_tx, shutdown_tx.clone());
 
-    shutdown::wait_ctrl_c_or_2(
+    shutdown::wait_ctrl_c_or_any(
         shutdown_tx,
         "Shutdown signal received, stopping pipeline...",
-        &mut tracker_handle,
-        "Slot tracker",
-        &mut display_handle,
-        "Display",
+        &mut [
+            (&mut tracker_handle, "Slot tracker"),
+            (&mut display_handle, "Display"),
+        ],
     )
     .await;
 

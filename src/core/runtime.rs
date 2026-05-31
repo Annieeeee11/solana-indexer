@@ -161,60 +161,18 @@ async fn wait_for_shutdown(
 ) {
     const MSG: &str = "Shutdown signal received, stopping indexer...";
 
-    match (watcher_handle.as_mut(), api_handle.as_mut()) {
-        (Some(w), Some(a)) => {
-            shutdown::wait_ctrl_c_or_4(
-                shutdown_tx,
-                MSG,
-                tracker_handle,
-                "Slot tracker",
-                display_handle,
-                "Display",
-                w,
-                "Account watcher",
-                a,
-                "HTTP API",
-            )
-            .await;
-        }
-        (Some(w), None) => {
-            shutdown::wait_ctrl_c_or_3(
-                shutdown_tx,
-                MSG,
-                tracker_handle,
-                "Slot tracker",
-                display_handle,
-                "Display",
-                w,
-                "Account watcher",
-            )
-            .await;
-        }
-        (None, Some(a)) => {
-            shutdown::wait_ctrl_c_or_3(
-                shutdown_tx,
-                MSG,
-                tracker_handle,
-                "Slot tracker",
-                display_handle,
-                "Display",
-                a,
-                "HTTP API",
-            )
-            .await;
-        }
-        (None, None) => {
-            shutdown::wait_ctrl_c_or_2(
-                shutdown_tx,
-                MSG,
-                tracker_handle,
-                "Slot tracker",
-                display_handle,
-                "Display",
-            )
-            .await;
-        }
+    let mut tasks: Vec<(&mut JoinHandle<()>, &str)> = vec![
+        (tracker_handle, "Slot tracker"),
+        (display_handle, "Display"),
+    ];
+    if let Some(w) = watcher_handle.as_mut() {
+        tasks.push((w, "Account watcher"));
     }
+    if let Some(a) = api_handle.as_mut() {
+        tasks.push((a, "HTTP API"));
+    }
+
+    shutdown::wait_ctrl_c_or_any(shutdown_tx, MSG, &mut tasks).await;
 }
 
 #[cfg(test)]

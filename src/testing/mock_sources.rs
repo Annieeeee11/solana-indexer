@@ -1,4 +1,4 @@
-use crate::core::types::{AccountState, Slot, SlotStatus, TransactionInfo};
+use crate::core::types::{AccountState, Slot, TransactionInfo};
 use crate::data_sources::{AccountSource, SlotSource};
 use crate::utils::errors::Result;
 use async_trait::async_trait;
@@ -51,12 +51,21 @@ impl AccountSource for MockAccountSource {
 /// Mock slot source for unit tests.
 pub struct MockSlotSource {
     leader: String,
+    slots: Vec<Slot>,
 }
 
 impl MockSlotSource {
     pub fn new(leader: impl Into<String>) -> Self {
         Self {
             leader: leader.into(),
+            slots: vec![],
+        }
+    }
+
+    pub fn with_slots(leader: impl Into<String>, slots: Vec<Slot>) -> Self {
+        Self {
+            leader: leader.into(),
+            slots,
         }
     }
 }
@@ -64,8 +73,15 @@ impl MockSlotSource {
 #[async_trait]
 impl SlotSource for MockSlotSource {
     async fn subscribe_slots(&self) -> Result<mpsc::Receiver<Slot>> {
-        let (tx, rx) = mpsc::channel(1);
-        drop(tx);
+        let (tx, rx) = mpsc::channel(self.slots.len().max(1));
+        let slots = self.slots.clone();
+        tokio::spawn(async move {
+            for slot in slots {
+                if tx.send(slot).await.is_err() {
+                    break;
+                }
+            }
+        });
         Ok(rx)
     }
 
@@ -87,16 +103,5 @@ pub fn sample_account(address: &str, lamports: u64) -> AccountState {
         executable: false,
         data: vec![],
         rent_epoch: 0,
-    }
-}
-
-pub fn sample_slot(n: u64) -> Slot {
-    Slot {
-        slot: n,
-        parent: Some(n.saturating_sub(1)),
-        status: SlotStatus::Confirmed,
-        timestamp: 1,
-        block_hash: None,
-        block_height: None,
     }
 }

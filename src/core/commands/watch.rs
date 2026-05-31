@@ -10,8 +10,11 @@ pub async fn watch_account(address: String) -> Result<()> {
     let ctx = AppContext::new().await?;
     Cli::connecting(&ctx.config.rpc.solana_rpc_url);
 
-    let mut watcher = AccountWatcher::new(ctx.account_source(), ctx.cache);
-    watcher.add_account(address.clone());
+    let watcher = AccountWatcher::with_accounts(
+        ctx.account_source(),
+        ctx.cache,
+        vec![address.clone()],
+    );
 
     match watcher.fetch_account(&address).await {
         Ok(acc) => Cli::account(&acc),
