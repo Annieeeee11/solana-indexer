@@ -10,6 +10,13 @@ readme = "README.md"
 homepage = "https://github.com/Annieeeee11/solana-indexer"
 keywords = ["solana", "blockchain", "indexer", "yellowstone", "streaming"]
 categories = ["command-line-utilities", "database"]
+include = [
+    "/Cargo.toml",
+    "/LICENSE",
+    "/README.md",
+    "/migrations/**/*",
+    "/src/**/*",
+]
 
 [features]
 default = ["sqlite", "postgres"]

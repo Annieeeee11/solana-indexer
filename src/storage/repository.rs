@@ -3,6 +3,11 @@ use crate::utils::errors::{IndexerError, Result};
 use sqlx::postgres::PgPool;
 #[cfg(feature = "sqlite")]
 use sqlx::sqlite::SqlitePool;
+use sqlx::migrate::Migrator;
+
+/// Migrations embedded at compile time from this crate's `migrations/` directory
+/// (resolved via `CARGO_MANIFEST_DIR` by the `sqlx::migrate!` macro).
+static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 fn is_modified_migration_error(err: &sqlx::migrate::MigrateError) -> bool {
     err.to_string()
@@ -11,7 +16,7 @@ fn is_modified_migration_error(err: &sqlx::migrate::MigrateError) -> bool {
 
 macro_rules! run_migrations {
     ($pool:expr) => {{
-        match sqlx::migrate!("./migrations").run($pool).await {
+        match MIGRATOR.run($pool).await {
             Ok(()) => Ok(()),
             Err(e) if is_modified_migration_error(&e) => {
                 if std::env::var("ALLOW_MIGRATION_RESET").ok().as_deref() != Some("1") {
@@ -28,7 +33,7 @@ macro_rules! run_migrations {
                 sqlx::query("DELETE FROM _sqlx_migrations")
                     .execute($pool)
                     .await?;
-                sqlx::migrate!("./migrations").run($pool).await?;
+                MIGRATOR.run($pool).await?;
                 Ok(())
             }
             Err(e) => Err(e.into()),
