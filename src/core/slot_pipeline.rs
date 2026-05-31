@@ -6,6 +6,7 @@ use crate::data_sources::YellowstoneSource;
 use crate::data_sources::yellowstone_grpc::YellowstoneGrpc;
 use crate::utils::config::RpcConfig;
 use crate::utils::errors::Result;
+use crate::utils::shutdown;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
@@ -101,31 +102,21 @@ pub async fn run(
     on_slot: Arc<dyn Fn(Slot, Option<String>) + Send + Sync>,
     on_tx: Arc<dyn Fn(TransactionInfo) + Send + Sync>,
 ) -> Result<()> {
-    let (shutdown_tx, _) = broadcast::channel(1);
+    let shutdown_tx = shutdown::channel();
     let (mut tracker_handle, mut display_handle) =
         spawn(ctx, yellowstone, options, on_slot, on_tx, shutdown_tx.clone());
 
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {
-            tracing::info!("Shutdown signal received, stopping pipeline...");
-            let _ = shutdown_tx.send(());
-        }
-        result = &mut tracker_handle => {
-            if let Err(e) = result {
-                tracing::error!("Slot tracker task failed: {}", e);
-            }
-        }
-        result = &mut display_handle => {
-            if let Err(e) = result {
-                tracing::error!("Display task failed: {}", e);
-            }
-        }
-    }
+    shutdown::wait_ctrl_c_or_2(
+        shutdown_tx,
+        "Shutdown signal received, stopping pipeline...",
+        &mut tracker_handle,
+        "Slot tracker",
+        &mut display_handle,
+        "Display",
+    )
+    .await;
 
-    tracker_handle.abort();
-    display_handle.abort();
-    let _ = tracker_handle.await;
-    let _ = display_handle.await;
+    shutdown::abort_join_handles([tracker_handle, display_handle]).await;
 
     Ok(())
 }

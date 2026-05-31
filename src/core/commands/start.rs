@@ -65,11 +65,12 @@ pub async fn track_slots(leaders: bool, transactions: bool) -> Result<()> {
     Cli::success(&format!("Tracking: {}", info.join(", ")));
     Cli::info("Ctrl+C to stop");
 
+    let yellowstone = slot_pipeline::yellowstone_client(&ctx.config.rpc);
     let (on_slot, on_tx) = slot_and_tx_handlers();
 
     slot_pipeline::run(
         ctx,
-        None,
+        yellowstone,
         SlotPipelineOptions {
             show_leaders: leaders,
             show_transactions: transactions,

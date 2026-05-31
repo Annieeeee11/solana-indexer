@@ -2,6 +2,7 @@ use crate::core::types::AccountState;
 use crate::data_sources::AccountSource;
 use crate::storage::cache::multi_cache::MultiCache;
 use crate::utils::errors::Result;
+use crate::utils::shutdown;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio::time::{interval, Duration};
@@ -62,15 +63,12 @@ impl AccountWatcher {
     where
         F: FnMut(&str, &AccountState, &AccountState),
     {
-        let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
-        let shutdown_task = tokio::spawn(async move {
-            let _ = tokio::signal::ctrl_c().await;
-            let _ = shutdown_tx.send(());
-        });
-
-        let result = self.run_until(on_change, shutdown_rx).await;
-        shutdown_task.abort();
-        result
+        let shutdown_tx = shutdown::channel();
+        shutdown::spawn_on_ctrl_c(
+            shutdown_tx.clone(),
+            "Shutdown signal received, stopping account watcher...",
+        );
+        self.run_until(on_change, shutdown_tx.subscribe()).await
     }
 
     pub async fn run_until<F>(

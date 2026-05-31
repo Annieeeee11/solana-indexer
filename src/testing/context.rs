@@ -12,8 +12,8 @@ pub fn test_context(
     api_port: Option<u16>,
 ) -> AppContext {
     let db = Arc::new(MockDatabase::with_wallets(wallets));
-    AppContext {
-        config: Config {
+    AppContext::from_parts(
+        Config {
             rpc: RpcConfig {
                 solana_rpc_url: "http://localhost".into(),
                 yellowstone_grpc_url: None,
@@ -31,7 +31,7 @@ pub fn test_context(
             watch_accounts,
             api_port,
         },
-        cache: Arc::new(MultiCache::new(10, 10, 10, db)),
-        rpc: Arc::new(crate::data_sources::solana_rpc::SolanaRpc::new("http://localhost")),
-    }
+        Arc::new(MultiCache::new(10, 10, 10, db)),
+        "http://localhost",
+    )
 }

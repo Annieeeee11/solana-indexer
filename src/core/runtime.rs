@@ -5,6 +5,7 @@ use crate::core::slot_pipeline::{self, SlotPipelineOptions};
 use crate::core::types::{AccountState, Slot, TransactionInfo};
 use crate::data_sources::YellowstoneSource;
 use crate::utils::errors::Result;
+use crate::utils::shutdown;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -84,7 +85,14 @@ pub async fn run(
     )
     .await;
 
-    abort_handles(tracker_handle, display_handle, watcher_handle, api_handle).await;
+    let mut handles = vec![tracker_handle, display_handle];
+    if let Some(h) = watcher_handle {
+        handles.push(h);
+    }
+    if let Some(h) = api_handle {
+        handles.push(h);
+    }
+    shutdown::abort_join_handles(handles).await;
 
     Ok(())
 }
@@ -151,72 +159,62 @@ async fn wait_for_shutdown(
     watcher_handle: &mut Option<JoinHandle<()>>,
     api_handle: &mut Option<JoinHandle<()>>,
 ) {
-    let shutdown = async {
-        let _ = tokio::signal::ctrl_c().await;
-        tracing::info!("Shutdown signal received, stopping indexer...");
-        let _ = shutdown_tx.send(());
-    };
+    const MSG: &str = "Shutdown signal received, stopping indexer...";
 
     match (watcher_handle.as_mut(), api_handle.as_mut()) {
         (Some(w), Some(a)) => {
-            tokio::select! {
-                () = shutdown => {}
-                result = tracker_handle => log_join_error("Slot tracker", result),
-                result = display_handle => log_join_error("Display", result),
-                result = w => log_join_error("Account watcher", result),
-                result = a => log_join_error("HTTP API", result),
-            }
+            shutdown::wait_ctrl_c_or_4(
+                shutdown_tx,
+                MSG,
+                tracker_handle,
+                "Slot tracker",
+                display_handle,
+                "Display",
+                w,
+                "Account watcher",
+                a,
+                "HTTP API",
+            )
+            .await;
         }
         (Some(w), None) => {
-            tokio::select! {
-                () = shutdown => {}
-                result = tracker_handle => log_join_error("Slot tracker", result),
-                result = display_handle => log_join_error("Display", result),
-                result = w => log_join_error("Account watcher", result),
-            }
+            shutdown::wait_ctrl_c_or_3(
+                shutdown_tx,
+                MSG,
+                tracker_handle,
+                "Slot tracker",
+                display_handle,
+                "Display",
+                w,
+                "Account watcher",
+            )
+            .await;
         }
         (None, Some(a)) => {
-            tokio::select! {
-                () = shutdown => {}
-                result = tracker_handle => log_join_error("Slot tracker", result),
-                result = display_handle => log_join_error("Display", result),
-                result = a => log_join_error("HTTP API", result),
-            }
+            shutdown::wait_ctrl_c_or_3(
+                shutdown_tx,
+                MSG,
+                tracker_handle,
+                "Slot tracker",
+                display_handle,
+                "Display",
+                a,
+                "HTTP API",
+            )
+            .await;
         }
         (None, None) => {
-            tokio::select! {
-                () = shutdown => {}
-                result = tracker_handle => log_join_error("Slot tracker", result),
-                result = display_handle => log_join_error("Display", result),
-            }
+            shutdown::wait_ctrl_c_or_2(
+                shutdown_tx,
+                MSG,
+                tracker_handle,
+                "Slot tracker",
+                display_handle,
+                "Display",
+            )
+            .await;
         }
     }
-}
-
-fn log_join_error(label: &str, result: std::result::Result<(), tokio::task::JoinError>) {
-    if let Err(e) = result {
-        tracing::error!("{label} task failed: {e}");
-    }
-}
-
-async fn abort_handles(
-    tracker_handle: JoinHandle<()>,
-    display_handle: JoinHandle<()>,
-    watcher_handle: Option<JoinHandle<()>>,
-    api_handle: Option<JoinHandle<()>>,
-) {
-    tracker_handle.abort();
-    display_handle.abort();
-    if let Some(h) = watcher_handle {
-        h.abort();
-        let _ = h.await;
-    }
-    if let Some(h) = api_handle {
-        h.abort();
-        let _ = h.await;
-    }
-    let _ = tracker_handle.await;
-    let _ = display_handle.await;
 }
 
 #[cfg(test)]

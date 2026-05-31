@@ -7,6 +7,7 @@ use axum::{
 };
 use crate::storage::cache::multi_cache::MultiCache;
 use crate::utils::errors::{IndexerError, Result};
+use crate::utils::shutdown;
 use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -38,12 +39,12 @@ pub fn router(cache: Arc<MultiCache>) -> Router {
 
 /// Standalone HTTP server (Ctrl+C stops). Binds `0.0.0.0` — use behind a firewall in production.
 pub async fn serve(cache: Arc<MultiCache>, port: u16) -> Result<()> {
-    let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
-    tokio::spawn(async move {
-        let _ = tokio::signal::ctrl_c().await;
-        let _ = shutdown_tx.send(());
-    });
-    serve_until_shutdown(cache, port, shutdown_rx).await
+    let shutdown_tx = shutdown::channel();
+    shutdown::spawn_on_ctrl_c(
+        shutdown_tx.clone(),
+        "Shutdown signal received, stopping HTTP API...",
+    );
+    serve_until_shutdown(cache, port, shutdown_tx.subscribe()).await
 }
 
 /// HTTP server until the shared shutdown broadcast fires (used by `indexer start` + `API_PORT`).

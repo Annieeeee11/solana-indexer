@@ -133,3 +133,19 @@ impl SlotTracker {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::data_sources::SlotSource;
+    use crate::testing::mock_sources::MockSlotSource;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn rpc_fallback_uses_mock_slot_source() {
+        let rpc: Arc<dyn SlotSource> = Arc::new(MockSlotSource::new("mock-leader-pubkey"));
+        assert_eq!(
+            rpc.get_slot_leader().await.unwrap(),
+            "mock-leader-pubkey"
+        );
+    }
+}

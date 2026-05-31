@@ -86,10 +86,6 @@ impl SolanaRpc {
         })
     }
 
-    pub async fn get_account(&self, address: &str) -> Result<AccountState> {
-        self.fetch_account_state(address).await
-    }
-
     pub async fn get_block_with_transactions(&self, slot: u64) -> Result<Vec<TransactionInfo>> {
         let config = RpcBlockConfig {
             encoding: Some(UiTransactionEncoding::JsonParsed),

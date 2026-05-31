@@ -10,7 +10,7 @@ use std::sync::Arc;
 pub struct AppContext {
     pub config: Config,
     pub cache: Arc<MultiCache>,
-    pub(crate) rpc: Arc<SolanaRpc>,
+    rpc: Arc<SolanaRpc>,
 }
 
 impl AppContext {
@@ -26,6 +26,19 @@ impl AppContext {
         let rpc = Arc::new(SolanaRpc::new(&config.rpc.solana_rpc_url));
 
         Ok(Self { config, cache, rpc })
+    }
+
+    #[cfg(test)]
+    pub fn from_parts(
+        config: Config,
+        cache: Arc<MultiCache>,
+        rpc_url: &str,
+    ) -> Self {
+        Self {
+            config,
+            cache,
+            rpc: Arc::new(SolanaRpc::new(rpc_url)),
+        }
     }
 
     pub fn account_source(&self) -> Arc<dyn AccountSource> {

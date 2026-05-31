@@ -3,4 +3,5 @@ pub mod config;
 pub mod errors;
 pub mod icons;
 pub mod logger;
+pub mod shutdown;
 pub mod theme;
