@@ -42,48 +42,112 @@ pub async fn run_postgres_migrations(pool: &PgPool) -> Result<()> {
     run_migrations!(pool)
 }
 
+/// Shared field → domain mapping (one source of truth for SQLite and Postgres rows).
+pub mod mappers {
+    use crate::core::types::{AccountState, Slot, SlotStatus, Transaction};
+
+    pub fn account(
+        address: String,
+        slot: i64,
+        lamports: i64,
+        owner: String,
+        executable: bool,
+        data: Vec<u8>,
+        rent_epoch: i64,
+    ) -> AccountState {
+        AccountState {
+            address,
+            slot: slot as u64,
+            lamports: lamports as u64,
+            owner,
+            executable,
+            data,
+            rent_epoch: rent_epoch as u64,
+        }
+    }
+
+    pub fn slot(
+        slot: i64,
+        timestamp: i64,
+        parent: Option<i64>,
+        status: &str,
+        block_hash: Option<String>,
+        block_height: Option<i64>,
+    ) -> Slot {
+        Slot {
+            slot: slot as u64,
+            timestamp,
+            parent: parent.map(|p| p as u64),
+            status: status.parse().unwrap_or(SlotStatus::Processed),
+            block_hash,
+            block_height: block_height.map(|h| h as u64),
+        }
+    }
+
+    pub fn transaction(
+        signature: String,
+        slot: i64,
+        block_time: Option<i64>,
+        fee: i64,
+        success: bool,
+        accounts_json: &str,
+    ) -> Transaction {
+        Transaction {
+            signature,
+            slot: slot as u64,
+            block_time,
+            fee: fee as u64,
+            success,
+            accounts: serde_json::from_str(accounts_json).unwrap_or_default(),
+        }
+    }
+
+    pub fn wallet(address: String, name: Option<String>, created_at: i64) -> (String, Option<String>, i64) {
+        (address, name, created_at)
+    }
+}
+
 macro_rules! row_mappers {
     ($mod_name:ident, $row:ty) => {
         pub mod $mod_name {
-            use crate::core::types::{AccountState, Slot, SlotStatus, Transaction};
             use sqlx::Row;
 
-            pub fn map_account(row: &$row) -> AccountState {
-                AccountState {
-                    address: row.get(0),
-                    slot: row.get::<i64, _>(1) as u64,
-                    lamports: row.get::<i64, _>(2) as u64,
-                    owner: row.get(3),
-                    executable: row.get(4),
-                    data: row.get(5),
-                    rent_epoch: row.get::<i64, _>(6) as u64,
-                }
+            pub fn map_account(row: &$row) -> crate::core::types::AccountState {
+                crate::storage::repository::mappers::account(
+                    row.get(0),
+                    row.get(1),
+                    row.get(2),
+                    row.get(3),
+                    row.get(4),
+                    row.get(5),
+                    row.get(6),
+                )
             }
 
-            pub fn map_slot(row: &$row) -> Slot {
-                Slot {
-                    slot: row.get::<i64, _>(0) as u64,
-                    timestamp: row.get(1),
-                    parent: row.get::<Option<i64>, _>(2).map(|p| p as u64),
-                    status: row.get::<&str, _>(3).parse().unwrap_or(SlotStatus::Processed),
-                    block_hash: row.get(4),
-                    block_height: row.get::<Option<i64>, _>(5).map(|h| h as u64),
-                }
+            pub fn map_slot(row: &$row) -> crate::core::types::Slot {
+                crate::storage::repository::mappers::slot(
+                    row.get(0),
+                    row.get(1),
+                    row.get(2),
+                    row.get(3),
+                    row.get(4),
+                    row.get(5),
+                )
             }
 
-            pub fn map_transaction(row: &$row) -> Transaction {
-                Transaction {
-                    signature: row.get(0),
-                    slot: row.get::<i64, _>(1) as u64,
-                    block_time: row.get(2),
-                    fee: row.get::<i64, _>(3) as u64,
-                    success: row.get(4),
-                    accounts: serde_json::from_str(row.get(5)).unwrap_or_default(),
-                }
+            pub fn map_transaction(row: &$row) -> crate::core::types::Transaction {
+                crate::storage::repository::mappers::transaction(
+                    row.get(0),
+                    row.get(1),
+                    row.get(2),
+                    row.get(3),
+                    row.get(4),
+                    row.get(5),
+                )
             }
 
             pub fn map_wallet(row: &$row) -> (String, Option<String>, i64) {
-                (row.get(0), row.get(1), row.get(2))
+                crate::storage::repository::mappers::wallet(row.get(0), row.get(1), row.get(2))
             }
         }
     };
@@ -93,7 +157,6 @@ row_mappers!(sqlite, sqlx::sqlite::SqliteRow);
 row_mappers!(postgres, sqlx::postgres::PgRow);
 
 /// Shared `DatabaseStorage` implementation for SQLite and PostgreSQL backends.
-/// SQL strings come from `queries::$queries`; row mappers from `repository::$mapper`.
 #[macro_export]
 macro_rules! impl_database_storage {
     ($storage:ty, $queries:ident, $mapper:ident) => {
