@@ -16,6 +16,7 @@ pub struct AppContext {
     pub cache: Arc<MultiCache>,
     pub metrics: Arc<IndexerMetrics>,
     rpc: Arc<SolanaRpc>,
+    enrich_rpc: Arc<dyn SlotSource>,
     yellowstone: Option<Arc<dyn YellowstoneSource>>,
 }
 
@@ -34,17 +35,24 @@ impl AppContext {
             metrics.clone(),
         ));
         let rpc = Arc::new(SolanaRpc::new(&config.rpc.solana_rpc_url, metrics.clone()));
-        let yellowstone = config
-            .rpc
-            .yellowstone_grpc_url
-            .as_ref()
-            .map(|url| {
-                tracing::info!("Yellowstone gRPC configured at {url}");
-                Arc::new(YellowstoneGrpc::new(
-                    url,
-                    config.rpc.yellowstone_grpc_token.clone(),
-                )) as Arc<dyn YellowstoneSource>
-            });
+
+        let enrich_rpc: Arc<dyn SlotSource> =
+            match config.rpc.enrichment_rpc_url.as_deref() {
+                Some(url) if url != config.rpc.solana_rpc_url => {
+                    tracing::info!("Using dedicated enrichment RPC");
+                    Arc::new(SolanaRpc::new(url, metrics.clone()))
+                }
+                _ => Arc::clone(&rpc) as Arc<dyn SlotSource>,
+            };
+
+        let yellowstone = config.rpc.yellowstone_grpc_url.as_ref().map(|url| {
+            tracing::info!("Yellowstone gRPC configured at {url}");
+            Arc::new(YellowstoneGrpc::new(
+                url,
+                config.rpc.yellowstone_grpc_token.clone(),
+                config.rpc.yellowstone_tx_accounts.clone(),
+            )) as Arc<dyn YellowstoneSource>
+        });
 
         let db_label = config
             .storage
@@ -52,10 +60,15 @@ impl AppContext {
             .as_ref()
             .map(|url| format!("PostgreSQL ({})", redact_database_url(url)))
             .unwrap_or_else(|| format!("SQLite ({:?})", config.storage.sqlite_path));
-        let tx_mode = if yellowstone.is_some() {
-            "Yellowstone slots (tx stream off by default — see README)"
+        let tx_mode = if !config.rpc.yellowstone_tx_accounts.is_empty() {
+            format!(
+                "Yellowstone filtered txs ({} accounts)",
+                config.rpc.yellowstone_tx_accounts.len()
+            )
+        } else if yellowstone.is_some() {
+            "Yellowstone slots only (set YELLOWSTONE_TX_ACCOUNTS for txs)".into()
         } else {
-            "RPC polling (slots + optional block txs)"
+            "RPC polling (slots + optional block txs)".into()
         };
         tracing::info!(
             db = %db_label,
@@ -75,6 +88,7 @@ impl AppContext {
             cache,
             metrics,
             rpc,
+            enrich_rpc,
             yellowstone,
         })
     }
@@ -90,11 +104,14 @@ impl AppContext {
         rpc_url: &str,
         metrics: Arc<IndexerMetrics>,
     ) -> Self {
+        let rpc = Arc::new(SolanaRpc::new(rpc_url, metrics.clone()));
+        let enrich_rpc = Arc::clone(&rpc) as Arc<dyn SlotSource>;
         Self {
             config,
             cache,
-            metrics: metrics.clone(),
-            rpc: Arc::new(SolanaRpc::new(rpc_url, metrics)),
+            metrics,
+            rpc,
+            enrich_rpc,
             yellowstone: None,
         }
     }
@@ -105,6 +122,10 @@ impl AppContext {
 
     pub fn slot_source(&self) -> Arc<dyn SlotSource> {
         Arc::clone(&self.rpc) as Arc<dyn SlotSource>
+    }
+
+    pub fn enrich_slot_source(&self) -> Arc<dyn SlotSource> {
+        Arc::clone(&self.enrich_rpc)
     }
 
     pub fn yellowstone_source(&self) -> Option<Arc<dyn YellowstoneSource>> {

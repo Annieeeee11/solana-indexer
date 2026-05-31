@@ -30,29 +30,47 @@ fn normalize_grpc_url(url: &str) -> String {
 pub struct YellowstoneGrpc {
     url: String,
     token: Option<String>,
+    tx_accounts: Vec<String>,
 }
 
 impl YellowstoneGrpc {
-    pub fn new(url: &str, token: Option<String>) -> Self {
+    pub fn new(url: &str, token: Option<String>, tx_accounts: Vec<String>) -> Self {
         Self {
             url: url.to_string(),
             token,
+            tx_accounts,
         }
     }
 
     fn slot_filter() -> HashMap<String, SubscribeRequestFilterSlots> {
         let mut m = HashMap::new();
-        m.insert("slots".into(), SubscribeRequestFilterSlots {
-            filter_by_commitment: Some(true),
-            interslot_updates: Some(false),
-        });
+        m.insert(
+            "slots".into(),
+            SubscribeRequestFilterSlots {
+                filter_by_commitment: Some(true),
+                interslot_updates: Some(false),
+            },
+        );
         m
     }
 
-    fn tx_filter() -> HashMap<String, SubscribeRequestFilterTransactions> {
-        // Empty: providers like RPCFast reject unfiltered mainnet tx subscriptions.
-        HashMap::new()
-     }
+    fn tx_filter(accounts: &[String]) -> HashMap<String, SubscribeRequestFilterTransactions> {
+        if accounts.is_empty() {
+            // Empty: providers like RPCFast reject unfiltered mainnet tx subscriptions.
+            return HashMap::new();
+        }
+
+        let mut m = HashMap::new();
+        m.insert(
+            "txs".into(),
+            SubscribeRequestFilterTransactions {
+                vote: Some(false),
+                account_include: accounts.to_vec(),
+                ..Default::default()
+            },
+        );
+        m
+    }
 
     fn parse_slot(s: &SubscribeUpdateSlot) -> Slot {
         let parent = s.parent.filter(|&p| p > 0);
@@ -75,11 +93,15 @@ impl YellowstoneGrpc {
         let meta = tx.meta.as_ref();
         let msg = tx.transaction.as_ref()?.message.as_ref()?;
 
-        let accounts: Vec<String> = msg.account_keys.iter()
+        let accounts: Vec<String> = msg
+            .account_keys
+            .iter()
             .map(|k| bs58::encode(k).into_string())
             .collect();
 
-        let program = msg.instructions.first()
+        let program = msg
+            .instructions
+            .first()
             .and_then(|ix| accounts.get(ix.program_id_index as usize))
             .cloned()
             .unwrap_or_else(|| "Unknown".into());
@@ -97,7 +119,9 @@ impl YellowstoneGrpc {
         })
     }
 
-    pub async fn subscribe_with_transactions(&self) -> Result<(mpsc::Receiver<Slot>, mpsc::Receiver<TransactionInfo>)> {
+    pub async fn subscribe_with_transactions(
+        &self,
+    ) -> Result<(mpsc::Receiver<Slot>, mpsc::Receiver<TransactionInfo>)> {
         let (slot_tx, slot_rx) = channels::slot_channel();
         let (tx_tx, tx_rx) = channels::transaction_channel();
 
@@ -106,7 +130,8 @@ impl YellowstoneGrpc {
             .map_err(|e| IndexerError::ConfigError(e.to_string()))?;
 
         if let Some(t) = &self.token {
-            builder = builder.x_token(Some(t.clone()))
+            builder = builder
+                .x_token(Some(t.clone()))
                 .map_err(|e| IndexerError::ConfigError(e.to_string()))?;
         }
 
@@ -121,20 +146,31 @@ impl YellowstoneGrpc {
             .connect_timeout(Duration::from_secs(15))
             .http2_keep_alive_interval(Duration::from_secs(30));
 
-        let mut client = builder.connect().await
+        let mut client = builder
+            .connect()
+            .await
             .map_err(|e| IndexerError::ConfigError(e.to_string()))?;
 
-        let (mut sink, mut stream) = client.subscribe().await
+        let (mut sink, mut stream) = client
+            .subscribe()
+            .await
             .map_err(|e| IndexerError::RpcError(e.to_string()))?;
+
+        let tx_filter = Self::tx_filter(&self.tx_accounts);
+        if tx_filter.is_empty() {
+            tracing::debug!("Yellowstone tx stream disabled (set YELLOWSTONE_TX_ACCOUNTS to enable)");
+        }
 
         let request = SubscribeRequest {
             slots: Self::slot_filter(),
-            transactions: Self::tx_filter(),
+            transactions: tx_filter,
             commitment: Some(CommitmentLevel::Confirmed as i32),
             ..Default::default()
         };
 
-        sink.send(request).await.map_err(|e| IndexerError::RpcError(e.to_string()))?;
+        sink.send(request)
+            .await
+            .map_err(|e| IndexerError::RpcError(e.to_string()))?;
 
         tokio::spawn(async move {
             while let Some(msg) = stream.next().await {

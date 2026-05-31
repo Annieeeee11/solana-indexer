@@ -1,5 +1,7 @@
 use crate::utils::errors::{IndexerError, Result};
+#[cfg(feature = "postgres")]
 use sqlx::postgres::PgPool;
+#[cfg(feature = "sqlite")]
 use sqlx::sqlite::SqlitePool;
 
 fn is_modified_migration_error(err: &sqlx::migrate::MigrateError) -> bool {
@@ -34,10 +36,12 @@ macro_rules! run_migrations {
     }};
 }
 
+#[cfg(feature = "sqlite")]
 pub async fn run_sqlite_migrations(pool: &SqlitePool) -> Result<()> {
     run_migrations!(pool)
 }
 
+#[cfg(feature = "postgres")]
 pub async fn run_postgres_migrations(pool: &PgPool) -> Result<()> {
     run_migrations!(pool)
 }
@@ -153,7 +157,9 @@ macro_rules! row_mappers {
     };
 }
 
+#[cfg(feature = "sqlite")]
 row_mappers!(sqlite, sqlx::sqlite::SqliteRow);
+#[cfg(feature = "postgres")]
 row_mappers!(postgres, sqlx::postgres::PgRow);
 
 /// Shared `DatabaseStorage` implementation for SQLite and PostgreSQL backends.

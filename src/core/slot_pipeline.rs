@@ -36,6 +36,7 @@ pub fn spawn(
     let tracker = SlotTracker::new(
         ctx.yellowstone_source(),
         ctx.slot_source(),
+        ctx.enrich_slot_source(),
         ctx.cache.clone(),
         ctx.metrics.clone(),
         ctx.slot_enrich_interval(),

@@ -33,7 +33,26 @@ pub async fn collect_watch_accounts(ctx: &AppContext) -> Result<Vec<String>> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
 
-    for addr in ctx.cache.get_active_wallets().await? {
+    const WALLET_QUERY_TIMEOUT: Duration = Duration::from_secs(10);
+
+    let db_wallets = match tokio::time::timeout(
+        WALLET_QUERY_TIMEOUT,
+        ctx.cache.get_active_wallets(),
+    )
+    .await
+    {
+        Ok(Ok(wallets)) => wallets,
+        Ok(Err(e)) => return Err(e),
+        Err(_) => {
+            tracing::warn!(
+                "Active wallet query timed out after {}s (slow DB?); using WATCH_ACCOUNTS only",
+                WALLET_QUERY_TIMEOUT.as_secs()
+            );
+            Vec::new()
+        }
+    };
+
+    for addr in db_wallets {
         if seen.insert(addr.clone()) {
             out.push(addr);
         }

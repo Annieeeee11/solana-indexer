@@ -22,8 +22,12 @@ pub struct Config {
 #[derive(Debug, Clone)]
 pub struct RpcConfig {
     pub solana_rpc_url: String,
+    /// Optional dedicated RPC for slot `get_block` enrichment (falls back to `solana_rpc_url`).
+    pub enrichment_rpc_url: Option<String>,
     pub yellowstone_grpc_url: Option<String>,
     pub yellowstone_grpc_token: Option<String>,
+    /// Optional comma-separated accounts for Yellowstone tx subscription (empty = slots only).
+    pub yellowstone_tx_accounts: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -47,8 +51,19 @@ impl Config {
             rpc: RpcConfig {
                 solana_rpc_url: std::env::var("SOLANA_RPC_URL")
                     .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".into()),
+                enrichment_rpc_url: std::env::var("ENRICHMENT_RPC_URL").ok().filter(|s| !s.is_empty()),
                 yellowstone_grpc_url: std::env::var("YELLOWSTONE_GRPC_URL").ok(),
                 yellowstone_grpc_token: std::env::var("YELLOWSTONE_GRPC_TOKEN").ok(),
+                yellowstone_tx_accounts: std::env::var("YELLOWSTONE_TX_ACCOUNTS")
+                    .ok()
+                    .map(|s| {
+                        s.split(',')
+                            .map(str::trim)
+                            .filter(|a| !a.is_empty())
+                            .map(String::from)
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             },
             storage: StorageConfig {
                 sqlite_path: std::env::var("SQLITE_DB_PATH")
@@ -111,6 +126,13 @@ impl Config {
         if self.api_port.is_some() && self.api_key.is_none() {
             tracing::warn!(
                 "API_PORT is set but API_KEY is not — HTTP API accepts unauthenticated requests"
+            );
+        }
+
+        if !self.rpc.yellowstone_tx_accounts.is_empty() {
+            tracing::info!(
+                count = self.rpc.yellowstone_tx_accounts.len(),
+                "YELLOWSTONE_TX_ACCOUNTS set — enabling filtered Yellowstone tx stream"
             );
         }
     }

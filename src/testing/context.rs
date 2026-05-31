@@ -19,8 +19,10 @@ pub fn test_context(
         Config {
             rpc: RpcConfig {
                 solana_rpc_url: "http://localhost".into(),
+                enrichment_rpc_url: None,
                 yellowstone_grpc_url: None,
                 yellowstone_grpc_token: None,
+                yellowstone_tx_accounts: vec![],
             },
             storage: StorageConfig {
                 sqlite_path: PathBuf::from("test.db"),

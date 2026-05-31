@@ -63,7 +63,7 @@ async fn yellowstone_streams_a_slot() {
         std::env::var("YELLOWSTONE_GRPC_URL").expect("set YELLOWSTONE_GRPC_URL for this test");
     let token = std::env::var("YELLOWSTONE_GRPC_TOKEN").ok();
 
-    let client = YellowstoneGrpc::new(&url, token);
+    let client = YellowstoneGrpc::new(&url, token, vec![]);
     let grpc = Arc::new(client) as Arc<dyn YellowstoneSource>;
 
     let (mut slot_rx, _tx_rx) = grpc

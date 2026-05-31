@@ -9,9 +9,13 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 
+/// Delay before background metadata backfill (lets blocks become available on RPC).
+const METADATA_BACKFILL_DELAY: Duration = Duration::from_secs(2);
+
 pub struct SlotTracker {
     yellowstone: Option<Arc<dyn YellowstoneSource>>,
     rpc: Arc<dyn SlotSource>,
+    enrich_rpc: Arc<dyn SlotSource>,
     cache: Arc<MultiCache>,
     metrics: Arc<IndexerMetrics>,
     enrich_limiter: EnrichmentLimiter,
@@ -23,6 +27,7 @@ impl SlotTracker {
     pub fn new(
         yellowstone: Option<Arc<dyn YellowstoneSource>>,
         rpc: Arc<dyn SlotSource>,
+        enrich_rpc: Arc<dyn SlotSource>,
         cache: Arc<MultiCache>,
         metrics: Arc<IndexerMetrics>,
         enrich_min_interval: Duration,
@@ -32,6 +37,7 @@ impl SlotTracker {
         Self {
             yellowstone,
             rpc,
+            enrich_rpc,
             cache,
             metrics,
             enrich_limiter: EnrichmentLimiter::new(enrich_min_interval),
@@ -77,11 +83,37 @@ impl SlotTracker {
             return;
         }
 
-        if self.rpc.enrich_slot_block_metadata(slot).await.is_ok() {
+        if self.enrich_rpc.enrich_slot_block_metadata(slot).await.is_ok() {
             if slot.block_hash.is_some() || slot.block_height.is_some() {
                 self.metrics.enrich_success.fetch_add(1, Ordering::Relaxed);
             }
         }
+    }
+
+    fn spawn_metadata_backfill(&self, slot: Slot) {
+        if slot.block_hash.is_some() && slot.block_height.is_some() {
+            return;
+        }
+
+        let cache = self.cache.clone();
+        let enrich_rpc = self.enrich_rpc.clone();
+        let metrics = self.metrics.clone();
+
+        tokio::spawn(async move {
+            tokio::time::sleep(METADATA_BACKFILL_DELAY).await;
+            let mut updated = slot;
+            if enrich_rpc
+                .enrich_slot_block_metadata(&mut updated)
+                .await
+                .is_ok()
+                && (updated.block_hash.is_some() || updated.block_height.is_some())
+            {
+                metrics.enrich_success.fetch_add(1, Ordering::Relaxed);
+                if let Err(e) = cache.store_slot(updated).await {
+                    tracing::debug!("Metadata backfill store failed: {e}");
+                }
+            }
+        });
     }
 
     async fn forward_slot(&self, mut slot: Slot) -> bool {
@@ -92,10 +124,11 @@ impl SlotTracker {
             return true;
         }
 
-        if let Err(e) = self.cache.store_slot(slot).await {
+        if let Err(e) = self.cache.store_slot(slot.clone()).await {
             tracing::error!("Failed to cache slot: {}", e);
         } else {
             self.metrics.maybe_log_periodic(100);
+            self.spawn_metadata_backfill(slot);
         }
 
         false
@@ -216,6 +249,7 @@ mod tests {
 
         let tracker = SlotTracker::new(
             None,
+            rpc.clone(),
             rpc,
             cache.clone(),
             metrics,
