@@ -11,7 +11,7 @@ FROM debian:bookworm-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/target/release/solana-indexer /usr/local/bin/solana-indexer
-ENV RUST_LOG=info,solana_indexer=info
+COPY --from=builder /app/target/release/solana-stream-indexer /usr/local/bin/solana-stream-indexer
+ENV RUST_LOG=info,solana_stream_indexer=info
 EXPOSE 8080
-CMD ["solana-indexer", "start"]
+CMD ["solana-stream-indexer", "start"]

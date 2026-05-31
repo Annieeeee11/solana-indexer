@@ -9,13 +9,12 @@
 //!   YELLOWSTONE_GRPC_TOKEN  — optional
 //!   DATABASE_URL            — for PostgreSQL test
 
-use solana_indexer::core::types::{Slot, SlotStatus};
-use solana_indexer::data_sources::solana_rpc::SolanaRpc;
-use solana_indexer::data_sources::yellowstone_grpc::YellowstoneGrpc;
-use solana_indexer::data_sources::{AccountSource, SlotSource, YellowstoneSource};
-use solana_indexer::storage::database::DatabaseStorage;
-use solana_indexer::storage::factory::create_storage;
-use solana_indexer::utils::config::StorageConfig;
+use solana_stream_indexer::core::types::{Slot, SlotStatus};
+use solana_stream_indexer::data_sources::solana_rpc::SolanaRpc;
+use solana_stream_indexer::data_sources::yellowstone_grpc::YellowstoneGrpc;
+use solana_stream_indexer::data_sources::{AccountSource, YellowstoneSource};
+use solana_stream_indexer::storage::factory::create_storage;
+use solana_stream_indexer::utils::config::StorageConfig;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,7 +28,7 @@ fn load_dotenv() {
 async fn rpc_returns_slot_leader() {
     load_dotenv();
     let url = std::env::var("SOLANA_RPC_URL").expect("set SOLANA_RPC_URL for this test");
-    let rpc = SolanaRpc::new(&url, solana_indexer::utils::metrics::IndexerMetrics::new());
+    let rpc = SolanaRpc::new(&url, solana_stream_indexer::utils::metrics::IndexerMetrics::new());
     let slot = rpc.current_slot().await.expect("current_slot should succeed");
     let leader = rpc
         .get_leader_at_slot(slot)
@@ -45,7 +44,7 @@ async fn rpc_fetches_wrapped_sol_account() {
     let url = std::env::var("SOLANA_RPC_URL").expect("set SOLANA_RPC_URL for this test");
     let rpc = Arc::new(SolanaRpc::new(
         &url,
-        solana_indexer::utils::metrics::IndexerMetrics::new(),
+        solana_stream_indexer::utils::metrics::IndexerMetrics::new(),
     )) as Arc<dyn AccountSource>;
 
     let account = rpc

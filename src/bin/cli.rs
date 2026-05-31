@@ -1,10 +1,10 @@
 use clap::{Parser, Subcommand};
-use solana_indexer::core::commands;
-use solana_indexer::utils::errors::Result;
-use solana_indexer::utils::logger;
+use solana_stream_indexer::core::commands;
+use solana_stream_indexer::utils::errors::Result;
+use solana_stream_indexer::utils::logger;
 
 #[derive(Parser)]
-#[command(name = "indexer", about = "Solana blockchain indexer")]
+#[command(name = "solana-stream-indexer", about = "Solana blockchain stream indexer")]
 struct Args {
     #[command(subcommand)]
     cmd: Cmd,

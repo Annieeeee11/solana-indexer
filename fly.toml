@@ -1,12 +1,12 @@
 # fly.toml app — run: fly launch (once), then fly secrets set ..., fly deploy
-app = "solana-indexer-demo"
+app = "solana-stream-indexer-demo"
 primary_region = "iad"
 
 [build]
   dockerfile = "Dockerfile"
 
 [env]
-  RUST_LOG = "info,solana_indexer=info"
+  RUST_LOG = "info,solana_stream_indexer=info"
   API_PORT = "8080"
 
 [http_service]

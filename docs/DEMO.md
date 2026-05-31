@@ -6,7 +6,7 @@ This guide hosts a **read-only public API** so others can try the indexer withou
 
 ```
 Fly.io / Railway / Render
-    └── solana-indexer start (24/7)
+    └── solana-stream-indexer start (24/7)
             ├── Yellowstone gRPC → slots
             ├── SOLANA_RPC_URL → enrichment + fallback
             └── DATABASE_URL → Supabase (free tier)
@@ -50,7 +50,7 @@ fly secrets set \
   YELLOWSTONE_GRPC_TOKEN='your-token' \
   API_PORT='8080' \
   API_KEY='demo-read-only-key' \
-  RUST_LOG='info,solana_indexer=info'
+  RUST_LOG='info,solana_stream_indexer=info'
 ```
 
 `Dockerfile` (minimal):
@@ -63,8 +63,8 @@ RUN cargo build --release
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/target/release/solana-indexer /usr/local/bin/
-CMD ["solana-indexer", "start"]
+COPY --from=builder /app/target/release/solana-stream-indexer /usr/local/bin/
+CMD ["solana-stream-indexer", "start"]
 ```
 
 Deploy:
@@ -98,10 +98,10 @@ Supabase **Table Editor** is a good free UI to show `slots` filling in real time
 For a **local** demo (no hosting):
 
 ```bash
-cargo install solana-indexer
+cargo install solana-stream-indexer
 cp .env.example .env
 # Set DATABASE_URL to your Supabase URI
-solana-indexer start
+solana-stream-indexer start
 ```
 
 Same Supabase project can back both your hosted demo and local testers (use separate projects for isolation).

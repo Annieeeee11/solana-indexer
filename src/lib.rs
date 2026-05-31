@@ -3,9 +3,9 @@
 //! # Quick start (CLI)
 //!
 //! ```bash
-//! cargo install solana-indexer
+//! cargo install solana-stream-indexer
 //! cp .env.example .env   # set SOLANA_RPC_URL and optionally DATABASE_URL
-//! solana-indexer start
+//! solana-stream-indexer start
 //! ```
 //!
 //! # Library
