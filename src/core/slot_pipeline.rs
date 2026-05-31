@@ -36,6 +36,15 @@ pub fn yellowstone_client(config: &RpcConfig) -> Option<Arc<dyn YellowstoneSourc
     })
 }
 
+/// User-facing description of the slot pipeline data source mode.
+pub fn streaming_mode_label(yellowstone: &Option<Arc<dyn YellowstoneSource>>) -> &'static str {
+    if yellowstone.is_some() {
+        "Yellowstone gRPC primary (RPC fallback if unavailable)"
+    } else {
+        "RPC polling (set YELLOWSTONE_GRPC_URL for gRPC streaming)"
+    }
+}
+
 /// Spawns SlotTracker and the display consumer. Caller owns shutdown via `shutdown` sender.
 pub fn spawn(
     ctx: AppContext,
