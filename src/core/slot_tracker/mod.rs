@@ -138,23 +138,12 @@ impl SlotTracker {
 mod tests {
     use super::*;
     use crate::core::channels;
-    use crate::core::types::{Slot, SlotStatus};
     use crate::storage::cache::multi_cache::MultiCache;
+    use crate::testing::fixtures::sample_slot;
     use crate::testing::mock_db::MockDatabase;
     use crate::testing::mock_sources::MockSlotSource;
     use std::sync::Arc;
     use tokio::time::{timeout, Duration};
-
-    fn sample_slot(n: u64) -> Slot {
-        Slot {
-            slot: n,
-            parent: Some(n.saturating_sub(1)),
-            status: SlotStatus::Confirmed,
-            timestamp: 1,
-            block_hash: None,
-            block_height: None,
-        }
-    }
 
     #[tokio::test]
     async fn rpc_poll_forwards_slot_to_channel_and_cache() {

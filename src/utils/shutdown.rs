@@ -60,10 +60,22 @@ pub async fn wait_ctrl_c_or_any(
     }
 }
 
-/// Abort tasks and await their completion.
-pub async fn abort_join_handles(handles: impl IntoIterator<Item = JoinHandle<()>>) {
+/// Gracefully wait for tasks to finish after shutdown; abort if they exceed the timeout.
+pub async fn shutdown_handles(handles: impl IntoIterator<Item = JoinHandle<()>>) {
+    use std::time::Duration;
+
+    const TIMEOUT: Duration = Duration::from_secs(5);
+
     for handle in handles {
-        handle.abort();
-        let _ = handle.await;
+        let abort = handle.abort_handle();
+        match tokio::time::timeout(TIMEOUT, handle).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) if e.is_cancelled() => {}
+            Ok(Err(e)) => tracing::error!("Task failed on shutdown: {e}"),
+            Err(_) => {
+                tracing::warn!("Task did not stop within {TIMEOUT:?}, aborting");
+                abort.abort();
+            }
+        }
     }
 }

@@ -165,15 +165,23 @@ impl SolanaRpc {
         Ok(txs)
     }
 
-    pub async fn get_slot_leader(&self) -> Result<String> {
-        let slot = self.client.get_slot().await
-            .map_err(|e| IndexerError::RpcError(e.to_string()))?;
-
-        self.client.get_slot_leaders(slot, 1).await
+    pub async fn get_leader_at_slot(&self, slot: u64) -> Result<String> {
+        self.client
+            .get_slot_leaders(slot, 1)
+            .await
             .map_err(|e| IndexerError::RpcError(e.to_string()))?
             .first()
             .map(|l| l.to_string())
             .ok_or_else(|| IndexerError::RpcError("No leader".into()))
+    }
+
+    pub async fn get_slot_leader(&self) -> Result<String> {
+        let slot = self
+            .client
+            .get_slot()
+            .await
+            .map_err(|e| IndexerError::RpcError(e.to_string()))?;
+        self.get_leader_at_slot(slot).await
     }
 }
 
@@ -192,6 +200,10 @@ impl SlotSource for SolanaRpc {
 
     async fn get_block_with_transactions(&self, slot: u64) -> Result<Vec<TransactionInfo>> {
         SolanaRpc::get_block_with_transactions(self, slot).await
+    }
+
+    async fn get_leader_at_slot(&self, slot: u64) -> Result<String> {
+        SolanaRpc::get_leader_at_slot(self, slot).await
     }
 
     async fn get_slot_leader(&self) -> Result<String> {

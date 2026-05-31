@@ -79,6 +79,22 @@ impl Config {
                 .and_then(|v| v.parse().ok()),
         })
     }
+
+    /// Log warnings for common misconfiguration (non-fatal).
+    pub fn warn_if_misconfigured(&self) {
+        if let Some(url) = &self.rpc.yellowstone_grpc_url {
+            let lower = url.to_lowercase();
+            if lower.starts_with("https://")
+                || lower.contains("mainnet-beta.solana.com")
+                || lower.contains("/v1/")
+            {
+                tracing::warn!(
+                    "YELLOWSTONE_GRPC_URL looks like an HTTP JSON-RPC URL; \
+                     use a Geyser gRPC endpoint (host:port), not SOLANA_RPC_URL"
+                );
+            }
+        }
+    }
 }
 #[cfg(test)]
 mod tests {

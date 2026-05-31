@@ -138,21 +138,11 @@ fn api_error(err: IndexerError) -> Response {
 mod tests {
     use super::*;
     use axum::{body::Body, http::Request};
-    use crate::core::types::{Slot, SlotStatus, Transaction};
+    use crate::core::types::Transaction;
     use crate::storage::database::DatabaseStorage;
+    use crate::testing::fixtures::sample_slot;
     use crate::testing::mock_db::MockDatabase;
     use tower::ServiceExt;
-
-    fn sample_slot(n: u64) -> Slot {
-        Slot {
-            slot: n,
-            parent: Some(n - 1),
-            status: SlotStatus::Confirmed,
-            timestamp: 1,
-            block_hash: None,
-            block_height: None,
-        }
-    }
 
     #[tokio::test]
     async fn health_returns_ok() {

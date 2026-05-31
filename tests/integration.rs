@@ -7,10 +7,16 @@
 //!   SOLANA_RPC_URL          — for RPC tests
 //!   YELLOWSTONE_GRPC_URL    — for Yellowstone test
 //!   YELLOWSTONE_GRPC_TOKEN  — optional
+//!   DATABASE_URL            — for PostgreSQL test
 
+use solana_indexer::core::types::{Slot, SlotStatus};
 use solana_indexer::data_sources::solana_rpc::SolanaRpc;
 use solana_indexer::data_sources::yellowstone_grpc::YellowstoneGrpc;
 use solana_indexer::data_sources::{AccountSource, SlotSource, YellowstoneSource};
+use solana_indexer::storage::database::DatabaseStorage;
+use solana_indexer::storage::factory::create_storage;
+use solana_indexer::utils::config::StorageConfig;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -68,4 +74,36 @@ async fn yellowstone_streams_a_slot() {
         .expect("slot channel should not close immediately");
 
     assert!(slot.slot > 0, "slot number should be positive");
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn postgres_stores_and_reads_slot() {
+    load_dotenv();
+    let url = std::env::var("DATABASE_URL").expect("set DATABASE_URL for this test");
+
+    let storage = create_storage(&StorageConfig {
+        sqlite_path: PathBuf::from("indexer.db"),
+        postgres_url: Some(url),
+    })
+    .await
+    .expect("postgres storage should connect");
+
+    let slot = Slot {
+        slot: 9_999_999_999,
+        parent: Some(9_999_999_998),
+        status: SlotStatus::Confirmed,
+        timestamp: 1,
+        block_hash: Some("test-hash".into()),
+        block_height: Some(1),
+    };
+
+    storage.store_slot(&slot).await.expect("store_slot should succeed");
+    let read = storage
+        .get_slot(slot.slot)
+        .await
+        .expect("get_slot should succeed")
+        .expect("slot should exist in postgres");
+    assert_eq!(read.slot, slot.slot);
+    assert_eq!(read.block_hash.as_deref(), Some("test-hash"));
 }

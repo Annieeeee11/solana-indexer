@@ -1,6 +1,7 @@
 pub mod account_watcher;
 pub mod channels;
 pub mod commands;
+pub mod leader_cache;
 pub mod runtime;
 pub mod slot_pipeline;
 pub mod slot_tracker;

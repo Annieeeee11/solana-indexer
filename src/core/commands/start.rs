@@ -1,7 +1,7 @@
 use crate::context::AppContext;
 use crate::core::commands::display::{account_change_handler, slot_and_tx_handlers};
 use crate::core::runtime::{self, IndexerOptions};
-use crate::core::slot_pipeline;
+use crate::core::slot_pipeline::SlotPipelineOptions;
 use crate::utils::cli_animations::Cli;
 use crate::utils::errors::Result;
 
@@ -9,7 +9,6 @@ pub async fn start() -> Result<()> {
     Cli::banner();
 
     let ctx = AppContext::new().await?;
-    let yellowstone = slot_pipeline::yellowstone_client(&ctx.config.rpc);
     let (on_slot, on_tx) = slot_and_tx_handlers();
     let on_account_change = account_change_handler();
 
@@ -17,7 +16,7 @@ pub async fn start() -> Result<()> {
     let api_port = ctx.config.api_port;
 
     Cli::success("Indexer running");
-    Cli::info(slot_pipeline::streaming_mode_label(&yellowstone));
+    Cli::info(ctx.streaming_mode_label());
     if watch_count > 0 {
         Cli::info(&format!(
             "Slot pipeline + {} account(s) watching in parallel",
@@ -35,7 +34,6 @@ pub async fn start() -> Result<()> {
 
     runtime::run(
         ctx,
-        yellowstone,
         IndexerOptions {
             api_port,
             ..IndexerOptions::default()
@@ -51,8 +49,6 @@ pub async fn start() -> Result<()> {
 }
 
 pub async fn track_slots(leaders: bool, transactions: bool) -> Result<()> {
-    use crate::core::slot_pipeline::SlotPipelineOptions;
-
     Cli::banner();
     let ctx = AppContext::new().await?;
 
@@ -65,15 +61,13 @@ pub async fn track_slots(leaders: bool, transactions: bool) -> Result<()> {
     }
     Cli::success(&format!("Tracking: {}", info.join(", ")));
 
-    let yellowstone = slot_pipeline::yellowstone_client(&ctx.config.rpc);
-    Cli::info(slot_pipeline::streaming_mode_label(&yellowstone));
+    Cli::info(ctx.streaming_mode_label());
     Cli::info("Ctrl+C to stop");
 
     let (on_slot, on_tx) = slot_and_tx_handlers();
 
-    slot_pipeline::run(
+    crate::core::slot_pipeline::run(
         ctx,
-        yellowstone,
         SlotPipelineOptions {
             show_leaders: leaders,
             show_transactions: transactions,

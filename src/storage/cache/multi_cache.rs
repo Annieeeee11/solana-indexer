@@ -102,20 +102,10 @@ impl MultiCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::types::{Slot, SlotStatus, Transaction};
+    use crate::core::types::Transaction;
+    use crate::testing::fixtures::sample_slot;
     use crate::testing::mock_db::MockDatabase;
     use std::sync::Arc;
-
-    fn sample_slot(n: u64) -> Slot {
-        Slot {
-            slot: n,
-            parent: Some(n - 1),
-            status: SlotStatus::Confirmed,
-            timestamp: 1,
-            block_hash: None,
-            block_height: None,
-        }
-    }
 
     #[tokio::test]
     async fn get_slot_backfills_l1_from_db() {

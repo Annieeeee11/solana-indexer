@@ -89,6 +89,10 @@ impl SlotSource for MockSlotSource {
         Ok(vec![])
     }
 
+    async fn get_leader_at_slot(&self, _slot: u64) -> Result<String> {
+        Ok(self.leader.clone())
+    }
+
     async fn get_slot_leader(&self) -> Result<String> {
         Ok(self.leader.clone())
     }

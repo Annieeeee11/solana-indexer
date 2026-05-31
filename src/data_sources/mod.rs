@@ -16,6 +16,8 @@ pub trait SlotSource: Send + Sync {
 
     async fn get_block_with_transactions(&self, slot: u64) -> Result<Vec<TransactionInfo>>;
 
+    async fn get_leader_at_slot(&self, slot: u64) -> Result<String>;
+
     async fn get_slot_leader(&self) -> Result<String>;
 }
 

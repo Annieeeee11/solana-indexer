@@ -3,7 +3,6 @@ use crate::context::AppContext;
 use crate::core::account_watcher::AccountWatcher;
 use crate::core::slot_pipeline::{self, SlotPipelineOptions};
 use crate::core::types::{AccountState, Slot, TransactionInfo};
-use crate::data_sources::YellowstoneSource;
 use crate::utils::errors::Result;
 use crate::utils::shutdown;
 use std::collections::HashSet;
@@ -48,7 +47,6 @@ pub async fn collect_watch_accounts(ctx: &AppContext) -> Result<Vec<String>> {
 
 pub async fn run(
     ctx: AppContext,
-    yellowstone: Option<Arc<dyn YellowstoneSource>>,
     options: IndexerOptions,
     on_slot: Arc<dyn Fn(Slot, Option<String>) + Send + Sync>,
     on_tx: Arc<dyn Fn(TransactionInfo) + Send + Sync>,
@@ -58,7 +56,6 @@ pub async fn run(
 
     let (mut tracker_handle, mut display_handle) = slot_pipeline::spawn(
         ctx.clone(),
-        yellowstone,
         options.pipeline,
         on_slot,
         on_tx,
@@ -92,7 +89,7 @@ pub async fn run(
     if let Some(h) = api_handle {
         handles.push(h);
     }
-    shutdown::abort_join_handles(handles).await;
+    shutdown::shutdown_handles(handles).await;
 
     Ok(())
 }

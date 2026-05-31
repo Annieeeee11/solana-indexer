@@ -43,7 +43,7 @@ impl SlotStatus {
     }
 }
 
-// Basic transaction data for storage.
+/// Persisted transaction shape (DB + L2 cache). Omits display-only fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction {
     pub signature: String,
@@ -54,7 +54,8 @@ pub struct Transaction {
     pub accounts: Vec<String>,
 }
 
-// Rich transaction info for display.
+/// Rich transaction from RPC/Yellowstone streams (program, CU, etc.) before storage.
+/// Converted to [`Transaction`] via `From` when writing to cache/DB.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionInfo {
     pub signature: String,

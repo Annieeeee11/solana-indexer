@@ -1,5 +1,6 @@
 use crate::data_sources::solana_rpc::SolanaRpc;
-use crate::data_sources::{AccountSource, SlotSource};
+use crate::data_sources::yellowstone_grpc::YellowstoneGrpc;
+use crate::data_sources::{AccountSource, SlotSource, YellowstoneSource};
 use crate::storage::cache::multi_cache::MultiCache;
 use crate::storage::factory::create_storage;
 use crate::utils::config::Config;
@@ -11,11 +12,14 @@ pub struct AppContext {
     pub config: Config,
     pub cache: Arc<MultiCache>,
     rpc: Arc<SolanaRpc>,
+    yellowstone: Option<Arc<dyn YellowstoneSource>>,
 }
 
 impl AppContext {
     pub async fn new() -> Result<Self> {
         let config = Config::load()?;
+        config.warn_if_misconfigured();
+
         let db = create_storage(&config.storage).await?;
         let cache = Arc::new(MultiCache::new(
             config.cache.l1_size,
@@ -24,8 +28,24 @@ impl AppContext {
             db,
         ));
         let rpc = Arc::new(SolanaRpc::new(&config.rpc.solana_rpc_url));
+        let yellowstone = config
+            .rpc
+            .yellowstone_grpc_url
+            .as_ref()
+            .map(|url| {
+                tracing::info!("Yellowstone gRPC configured at {url}");
+                Arc::new(YellowstoneGrpc::new(
+                    url,
+                    config.rpc.yellowstone_grpc_token.clone(),
+                )) as Arc<dyn YellowstoneSource>
+            });
 
-        Ok(Self { config, cache, rpc })
+        Ok(Self {
+            config,
+            cache,
+            rpc,
+            yellowstone,
+        })
     }
 
     #[cfg(test)]
@@ -38,6 +58,7 @@ impl AppContext {
             config,
             cache,
             rpc: Arc::new(SolanaRpc::new(rpc_url)),
+            yellowstone: None,
         }
     }
 
@@ -47,5 +68,17 @@ impl AppContext {
 
     pub fn slot_source(&self) -> Arc<dyn SlotSource> {
         Arc::clone(&self.rpc) as Arc<dyn SlotSource>
+    }
+
+    pub fn yellowstone_source(&self) -> Option<Arc<dyn YellowstoneSource>> {
+        self.yellowstone.clone()
+    }
+
+    pub fn streaming_mode_label(&self) -> &'static str {
+        if self.yellowstone.is_some() {
+            "Yellowstone gRPC primary (RPC fallback if unavailable)"
+        } else {
+            "RPC polling (set YELLOWSTONE_GRPC_URL for gRPC streaming)"
+        }
     }
 }
